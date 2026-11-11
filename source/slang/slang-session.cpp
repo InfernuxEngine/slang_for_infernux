@@ -5,6 +5,7 @@
 #include "core/slang-blob.h"
 #include "core/slang-lz4-compression-system.h"
 #include "core/slang-shared-library.h"
+#include "core/slang-string-util.h"
 #include "slang-check-impl.h"
 #include "slang-compiler.h"
 #include "slang-lower-to-ir.h"
@@ -46,7 +47,12 @@ static String findStandardModulePath(String const& stdModuleDirPath, String cons
     // Standard modules are co-located with libslang.so/slang.dll under
     // SLANG_STANDARD_MODULE_DIR_NAME.
     // Hierarchical imports map to subdirectories, e.g. "slang/neural" or "experimental/workgraph".
-    String stdModulePath = Path::combine(stdModuleDirPath, moduleName + ".slang-module");
+    // Hierarchical module names use '/', but a DLL loaded with a Windows
+    // extended-length path requires native separators throughout the path.
+    String stdModulePath = StringUtil::calcCharReplaced(
+        Path::combine(stdModuleDirPath, moduleName + ".slang-module"),
+        '/',
+        Path::kOSCanonicalPathDelimiter);
 
     if (File::exists(stdModulePath))
         return stdModulePath;
