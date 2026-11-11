@@ -401,6 +401,14 @@ SlangResult UnixPipeStream::write(const void* buffer, size_t length)
     Process::Flags flags,
     RefPtr<Process>& outProcess)
 {
+#if defined(__ANDROID__) && __ANDROID_API__ < 28
+    // Bionic added posix_spawn in API 28. Direct in-process compilation is
+    // available on earlier Android versions; external tool execution is not.
+    SLANG_UNUSED(commandLine);
+    SLANG_UNUSED(flags);
+    SLANG_UNUSED(outProcess);
+    return SLANG_E_NOT_AVAILABLE;
+#else
     const bool unreadableStdin = (flags & Process::Flag::UnreadableStdin) != 0;
     const char* whatFailed = nullptr;
     int spawnResult = 0;
@@ -639,6 +647,7 @@ SlangResult UnixPipeStream::write(const void* buffer, size_t length)
     ::close(stderrPipe[1]);
 
     return whatFailed || spawnResult ? SLANG_FAIL : SLANG_OK;
+#endif
 }
 
 /* static */ uint64_t Process::getClockFrequency()
