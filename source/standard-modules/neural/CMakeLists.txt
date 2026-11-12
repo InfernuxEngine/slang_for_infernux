@@ -43,7 +43,7 @@ if(SLANG_GENERATORS_PATH)
     set(SLANG_COMPILER
         "${SLANG_GENERATORS_PATH}/slang-bootstrap${CMAKE_HOST_EXECUTABLE_SUFFIX}"
     )
-    set(SLANG_COMPILER_DEPENDENCY)
+    set(SLANG_COMPILER_DEPENDENCY "${SLANG_COMPILER}")
 else()
     # Build standard modules with slang-bootstrap so this target never requires
     # slangc.exe. Load the generated core module so this step does not recompile it.

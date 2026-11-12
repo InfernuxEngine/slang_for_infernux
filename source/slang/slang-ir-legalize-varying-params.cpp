@@ -3835,7 +3835,7 @@ private:
         auto result = builder.createStructType();
         copyNameHintAndDebugDecorations(result, src);
         VaryingFlatteningContext
-            context{builder, result, mapping, varsWithSemanticInfo, locationKind};
+            context{builder, result, mapping, varsWithSemanticInfo, locationKind, {}};
         auto offset = varLayout->findOffsetAttr(locationKind);
         flattenVaryingType(
             context,
