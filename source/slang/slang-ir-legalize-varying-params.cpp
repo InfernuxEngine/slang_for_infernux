@@ -2932,6 +2932,8 @@ protected:
     virtual UnownedStringSlice getUserSemanticNameSlice(String& loweredName, bool isUserSemantic)
         const = 0;
 
+    virtual bool usePhysicalVaryingLocations() const { return false; }
+
     /// Mark the field that holds a fragment shader's non-struct return value as color output
     /// `targetIndex` (`SV_Target<targetIndex>`).
     virtual void addFragmentShaderReturnValueDecoration(
@@ -3333,10 +3335,15 @@ private:
                     builder,
                     structType,
                     mapOldFieldToNewField,
-                    semanticInfoToRemove);
+                    semanticInfoToRemove,
+                    layout,
+                    LayoutResourceKind::VaryingInput);
 
                 // Validate/rearange all semantics which overlap in our flat struct.
-                fixFieldSemanticsOfFlatStruct(flattenedStruct);
+                fixFieldSemanticsOfFlatStruct(
+                    flattenedStruct,
+                    layout,
+                    LayoutResourceKind::VaryingInput);
                 ensureStructHasUserSemantic<LayoutResourceKind::VaryingInput>(
                     flattenedStruct,
                     layout);
@@ -3543,329 +3550,300 @@ private:
         }
     }
 
-    // Stores a hicharchy of members and children which map 'oldStruct->member' to
-    // 'flatStruct->member' Note: this map assumes we map to FlatStruct since it is easier/faster to
-    // process
+    // A leaf path identifies repeated struct fields and array elements without
+    // duplicating a tree of mapping nodes. The same paths copy either direction.
     struct MapStructToFlatStruct
     {
-        /*
-        We need a hicharchy map to resolve dependencies for mapping
-        oldStruct to newStruct efficently. Example:
-
-        MyStruct
-            |
-          / | \
-         /  |  \
-        /   |   \
-    M0<A> M1<A> M2<B>
-       |    |    |
-      A_0  A_0  B_0
-
-      Without storing hicharchy information, there will be no way to tell apart
-      `myStruct.M0.A0` from `myStruct.M1.A0` since IRStructKey/IRStructField
-      only has 1 instance of `A::A0`
-      */
-
         enum CopyOptions : int
         {
-            // Copy a flattened-struct into a struct
-            FlatStructIntoStruct = 0,
-
-            // Copy a struct into a flattened-struct
-            StructIntoFlatStruct = 1,
+            FlatStructIntoStruct,
+            StructIntoFlatStruct,
         };
 
-    private:
-        // Children of member if applicable.
-        Dictionary<IRStructField*, MapStructToFlatStruct> members;
-
-        // Field correlating to MapStructToFlatStruct Node.
-        IRInst* node;
-        IRStructKey* getKey()
+        struct Mapping
         {
-            SLANG_ASSERT(as<IRStructField>(node));
-            return as<IRStructField>(node)->getKey();
-        }
-        IRInst* getNode() { return node; }
-        IRType* getFieldType()
-        {
-            SLANG_ASSERT(as<IRStructField>(node));
-            return as<IRStructField>(node)->getFieldType();
-        }
+            List<IRInst*> path;
+            IRStructField* field;
+            IRIntegerValue matrixColumn = -1;
+        };
+        List<Mapping> fields;
 
-        // Whom node maps to inside target flatStruct
-        IRStructField* targetMapping;
-
-        auto begin() { return members.begin(); }
-        auto end() { return members.end(); }
-
-        // Copies members of oldStruct to/from newFlatStruct. Assumes members of val1 maps to
-        // members in val2 using `MapStructToFlatStruct`
-        template<int copyOptions>
-        static void _emitCopy(
-            IRBuilder& builder,
-            IRInst* val1,
-            IRStructType* type1,
-            IRInst* val2,
-            IRStructType* type2,
-            MapStructToFlatStruct& node)
-        {
-            for (auto& field1Pair : node)
-            {
-                auto& field1 = field1Pair.second;
-
-                // Get member of val1
-                IRInst* fieldAddr1 = nullptr;
-                if constexpr (copyOptions == (int)CopyOptions::FlatStructIntoStruct)
-                {
-                    fieldAddr1 = builder.emitFieldAddress(type1, val1, field1.getKey());
-                }
-                else
-                {
-                    if (as<IRPtrTypeBase>(val1))
-                        val1 = builder.emitLoad(val1);
-                    fieldAddr1 = builder.emitFieldExtract(type1, val1, field1.getKey());
-                }
-
-                // If val1 is a struct, recurse
-                if (auto fieldAsStruct1 = as<IRStructType>(field1.getFieldType()))
-                {
-                    _emitCopy<copyOptions>(
-                        builder,
-                        fieldAddr1,
-                        fieldAsStruct1,
-                        val2,
-                        type2,
-                        field1);
-                    continue;
-                }
-
-                // Get member of val2 which maps to val1.member
-                auto field2 = field1.getMapping();
-                SLANG_ASSERT(field2);
-                IRInst* fieldAddr2 = nullptr;
-                if constexpr (copyOptions == (int)CopyOptions::FlatStructIntoStruct)
-                {
-                    if (as<IRPtrTypeBase>(val2))
-                        val2 = builder.emitLoad(val1);
-                    fieldAddr2 = builder.emitFieldExtract(type2, val2, field2->getKey());
-                }
-                else
-                {
-                    fieldAddr2 = builder.emitFieldAddress(type2, val2, field2->getKey());
-                }
-
-                // Copy val2/val1 member into val1/val2 member
-                if constexpr (copyOptions == (int)CopyOptions::FlatStructIntoStruct)
-                {
-                    builder.emitStore(fieldAddr1, fieldAddr2);
-                }
-                else
-                {
-                    builder.emitStore(fieldAddr2, fieldAddr1);
-                }
-            }
-        }
-
-    public:
-        void setNode(IRInst* newNode) { node = newNode; }
-        // Get 'MapStructToFlatStruct' that is a child of 'parent'.
-        // Make 'MapStructToFlatStruct' if no 'member' is currently mapped to 'parent'.
-        MapStructToFlatStruct& getMember(IRStructField* member) { return members[member]; }
-        MapStructToFlatStruct& operator[](IRStructField* member) { return getMember(member); }
-
-        void setMapping(IRStructField* newTargetMapping) { targetMapping = newTargetMapping; }
-        // Get 'MapStructToFlatStruct' that is a child of 'parent'.
-        // Return nullptr if no member is mapped to 'parent'
-        IRStructField* getMapping() { return targetMapping; }
-
-        // Copies srcVal into dstVal using hicharchy map.
         template<int copyOptions>
         void emitCopy(IRBuilder& builder, IRInst* dstVal, IRInst* srcVal)
         {
-            auto dstType = dstVal->getDataType();
-            if (auto dstPtrType = as<IRPtrTypeBase>(dstType))
-                dstType = dstPtrType->getValueType();
-            auto dstStructType = as<IRStructType>(dstType);
-            SLANG_ASSERT(dstStructType);
-
-            auto srcType = srcVal->getDataType();
-            if (auto srcPtrType = as<IRPtrTypeBase>(srcType))
-                srcType = srcPtrType->getValueType();
-            auto srcStructType = as<IRStructType>(srcType);
-            SLANG_ASSERT(srcStructType);
-
-            if constexpr (copyOptions == (int)CopyOptions::FlatStructIntoStruct)
+            if (as<IRPtrTypeBase>(srcVal->getDataType()))
+                srcVal = builder.emitLoad(srcVal);
+            for (auto& mapping : fields)
             {
-                // CopyOptions::FlatStructIntoStruct copy a flattened-struct (mapped member) into a
-                // struct
-                SLANG_ASSERT(node == dstStructType);
-                _emitCopy<copyOptions>(
-                    builder,
-                    dstVal,
-                    dstStructType,
-                    srcVal,
-                    srcStructType,
-                    *this);
-            }
-            else
-            {
-                // CopyOptions::StructIntoFlatStruct copy a struct into a flattened-struct
-                SLANG_ASSERT(node == srcStructType);
-                _emitCopy<copyOptions>(
-                    builder,
-                    srcVal,
-                    srcStructType,
-                    dstVal,
-                    dstStructType,
-                    *this);
+                if constexpr (copyOptions == FlatStructIntoStruct)
+                {
+                    auto address = dstVal;
+                    for (auto selector : mapping.path)
+                        address = as<IRStructKey>(selector)
+                                      ? builder.emitFieldAddress(address, selector)
+                                      : builder.emitElementAddress(address, selector);
+                    auto value = builder.emitFieldExtract(srcVal, mapping.field->getKey());
+                    if (mapping.matrixColumn < 0)
+                        builder.emitStore(address, value);
+                    else
+                    {
+                        auto rows =
+                            getIntVal(cast<IRVectorType>(value->getDataType())->getElementCount());
+                        for (IRIntegerValue row = 0; row < rows; ++row)
+                            builder.emitStore(
+                                builder.emitElementAddress(
+                                    builder.emitElementAddress(address, row),
+                                    mapping.matrixColumn),
+                                builder.emitElementExtract(value, row));
+                    }
+                }
+                else
+                {
+                    auto value = srcVal;
+                    for (auto selector : mapping.path)
+                        value = as<IRStructKey>(selector)
+                                    ? builder.emitFieldExtract(value, selector)
+                                    : builder.emitElementExtract(value, selector);
+                    if (mapping.matrixColumn >= 0)
+                    {
+                        auto vectorType = cast<IRVectorType>(mapping.field->getFieldType());
+                        List<IRInst*> elements;
+                        for (IRIntegerValue row = 0; row < getIntVal(vectorType->getElementCount());
+                             ++row)
+                            elements.add(builder.emitElementExtract(
+                                builder.emitElementExtract(value, row),
+                                mapping.matrixColumn));
+                        value = builder.emitMakeVector(
+                            vectorType,
+                            elements.getCount(),
+                            elements.getBuffer());
+                    }
+                    builder.emitStore(
+                        builder.emitFieldAddress(dstVal, mapping.field->getKey()),
+                        value);
+                }
             }
         }
     };
 
-    IRStructType* _flattenNestedStructs(
-        IRBuilder& builder,
-        IRStructType* dst,
-        IRStructType* src,
-        IRSemanticDecoration* parentSemanticDecoration,
-        IRLayoutDecoration* parentLayout,
-        MapStructToFlatStruct& mapFieldToField,
-        HashSet<IRStructField*>& varsWithSemanticInfo)
+    struct VaryingFlatteningContext
     {
-        // For all fields ('oldField') of a struct do the following:
-        // 1. Check for 'decorations which carry semantic info' (IRSemanticDecoration,
-        // IRLayoutDecoration), store these if found.
-        //  * Do not propagate semantic info if the current node has *any* form of semantic
-        //  information.
-        // Update varsWithSemanticInfo.
-        // 2. If IRStructType:
-        //  2a. Recurse this function with 'decorations that carry semantic info' from parent.
-        // 3. If not IRStructType:
-        //  3a Metal. Emit 'newField' equal to 'oldField', add 'decorations which carry semantic
-        //  info'.
-        //
-        //  3a WGSL. Emit 'newField' with 'newKey' equal to 'oldField' and 'oldKey', respectively,
-        //      where 'oldKey' is the key corresponding to 'oldField'.
-        //      Add 'decorations which carry semantic info' to 'newField', and move all decorations
-        //      of 'oldKey' to 'newKey'.
-        //  3b. Store a mapping from 'oldField' to 'newField' in 'mapFieldToField'. This info is
-        //  needed to copy between types.
-        for (auto oldField : src->getFields())
+        IRBuilder& builder;
+        IRStructType* result;
+        MapStructToFlatStruct& mapping;
+        HashSet<IRStructField*>& semanticInfoToRemove;
+        LayoutResourceKind locationKind;
+        List<IRInst*> path;
+    };
+
+    void flattenVaryingType(
+        VaryingFlatteningContext& context,
+        IRType* type,
+        IRVarLayout* physicalLayout,
+        UInt location,
+        UInt space,
+        IRStructKey* sourceKey = nullptr,
+        IRStructField* sourceField = nullptr,
+        IRSemanticDecoration* semantic = nullptr,
+        IRLayoutDecoration* semanticLayout = nullptr,
+        IRInterpolationModeDecoration* interpolation = nullptr,
+        IRIntegerValue matrixColumn = -1)
+    {
+        auto& builder = context.builder;
+        if (sourceKey)
+            if (auto mode = sourceKey->findDecoration<IRInterpolationModeDecoration>())
+                interpolation = mode;
+        if (auto structType = as<IRStructType>(type))
         {
-            auto& fieldMappingNode = mapFieldToField[oldField];
-            fieldMappingNode.setNode(oldField);
-
-            // step 1
-            bool foundSemanticDecor = false;
-            auto oldKey = oldField->getKey();
-            IRSemanticDecoration* fieldSemanticDecoration = parentSemanticDecoration;
-            if (auto oldSemanticDecoration = oldKey->findDecoration<IRSemanticDecoration>())
+            auto typeLayout =
+                physicalLayout ? as<IRStructTypeLayout>(physicalLayout->getTypeLayout()) : nullptr;
+            UInt fieldIndex = 0;
+            for (auto field : structType->getFields())
             {
-                foundSemanticDecor = true;
-                fieldSemanticDecoration = oldSemanticDecoration;
-                parentLayout = nullptr;
-            }
-
-            IRLayoutDecoration* fieldLayout = parentLayout;
-            if (auto oldLayout = oldKey->findDecoration<IRLayoutDecoration>())
-            {
-                fieldLayout = oldLayout;
-                if (!foundSemanticDecor)
-                    fieldSemanticDecoration = nullptr;
-            }
-            if (fieldSemanticDecoration != parentSemanticDecoration || parentLayout != fieldLayout)
-                varsWithSemanticInfo.add(oldField);
-
-            // step 2a
-            if (auto structFieldType = as<IRStructType>(oldField->getFieldType()))
-            {
-                _flattenNestedStructs(
-                    builder,
-                    dst,
-                    structFieldType,
-                    fieldSemanticDecoration,
-                    fieldLayout,
-                    fieldMappingNode,
-                    varsWithSemanticInfo);
-                continue;
-            }
-
-            // step 3a
-            auto newKey = builder.createStructKey();
-            flattenNestedStructsTransferKeyDecorations(newKey, oldKey);
-
-            auto newField = builder.createStructField(dst, newKey, oldField->getFieldType());
-            copyNameHintAndDebugDecorations(newField, oldField);
-
-            if (fieldSemanticDecoration)
-                builder.addSemanticDecoration(
-                    newKey,
-                    fieldSemanticDecoration->getSemanticName(),
-                    fieldSemanticDecoration->getSemanticIndex());
-
-            if (fieldLayout)
-            {
-                IRLayout* oldLayout = fieldLayout->getLayout();
-                List<IRInst*> instToCopy;
-                // Only copy certain decorations needed for resolving system semantics
-                for (UInt i = 0; i < oldLayout->getOperandCount(); i++)
+                auto key = field->getKey();
+                auto fieldSemantic = key->findDecoration<IRSemanticDecoration>();
+                auto fieldLayout = key->findDecoration<IRLayoutDecoration>();
+                if (fieldSemantic || fieldLayout)
+                    context.semanticInfoToRemove.add(field);
+                auto childSemantic = fieldSemantic ? fieldSemantic : semantic;
+                auto childSemanticLayout = fieldSemantic ? nullptr : semanticLayout;
+                if (fieldLayout)
                 {
-                    auto operand = oldLayout->getOperand(i);
-                    if (as<IRVarOffsetAttr>(operand) || as<IRUserSemanticAttr>(operand) ||
-                        as<IRSystemValueSemanticAttr>(operand) || as<IRStageAttr>(operand))
-                        instToCopy.add(operand);
+                    childSemanticLayout = fieldLayout;
+                    if (!fieldSemantic)
+                        childSemantic = nullptr;
                 }
-                IRVarLayout* newLayout = builder.getVarLayout(instToCopy);
-                builder.addLayoutDecoration(newKey, newLayout);
+
+                auto childLayout = typeLayout ? typeLayout->getFieldLayout(fieldIndex) : nullptr;
+                ++fieldIndex;
+                UInt childLocation = location;
+                UInt childSpace = space;
+                if (childLayout)
+                    if (auto offset = childLayout->findOffsetAttr(context.locationKind))
+                    {
+                        childLocation += offset->getOffset();
+                        childSpace += offset->getSpace();
+                    }
+                context.path.add(key);
+                flattenVaryingType(
+                    context,
+                    field->getFieldType(),
+                    childLayout,
+                    childLocation,
+                    childSpace,
+                    key,
+                    field,
+                    childSemantic,
+                    childSemanticLayout,
+                    interpolation);
+                context.path.removeLast();
             }
-            // step 3b
-            fieldMappingNode.setMapping(newField);
+            return;
         }
 
-        return dst;
+        // WGSL IO admits scalars and vectors. Matrices use the reflected major
+        // axis; arrays recursively use the element's location footprint.
+        // Built-in arrays (e.g. clip distances) retain their platform type.
+        auto systemValue = physicalLayout ? physicalLayout->findSystemValueSemanticAttr() : nullptr;
+        bool isBuiltin =
+            systemValue && !systemValue->getName().startsWithCaseInsensitive(toSlice("sv_target"));
+        if (usePhysicalVaryingLocations() && !isBuiltin)
+        {
+            IRType* elementType = nullptr;
+            IRTypeLayout* elementTypeLayout = nullptr;
+            IRIntegerValue count = 0;
+            UInt stride = 1;
+            bool columns = false;
+            if (auto array = as<IRArrayType>(type))
+            {
+                elementType = array->getElementType();
+                count = getIntVal(array->getElementCount());
+                elementTypeLayout = cast<IRArrayTypeLayout>(physicalLayout->getTypeLayout())
+                                        ->getElementTypeLayout();
+                stride = elementTypeLayout->findSizeAttr(context.locationKind)->getFiniteSize();
+            }
+            else if (auto matrix = as<IRMatrixType>(type))
+            {
+                columns = cast<IRMatrixTypeLayout>(physicalLayout->getTypeLayout())->getMode() ==
+                          kMatrixLayoutMode_ColumnMajor;
+                elementType = builder.getVectorType(
+                    matrix->getElementType(),
+                    columns ? matrix->getRowCount() : matrix->getColumnCount());
+                count = getIntVal(columns ? matrix->getColumnCount() : matrix->getRowCount());
+                IRTypeLayout::Builder typeLayoutBuilder(&builder);
+                typeLayoutBuilder.addResourceUsage(context.locationKind, LayoutSize(1));
+                elementTypeLayout = typeLayoutBuilder.build();
+            }
+            if (elementType)
+            {
+                IRVarLayout::Builder layoutBuilder(&builder, elementTypeLayout);
+                layoutBuilder.cloneEverythingButOffsetsFrom(physicalLayout);
+                auto elementLayout = layoutBuilder.build();
+                for (IRIntegerValue i = 0; i < count; ++i)
+                {
+                    if (!columns)
+                        context.path.add(builder.getIntValue(builder.getIntType(), i));
+                    flattenVaryingType(
+                        context,
+                        elementType,
+                        elementLayout,
+                        location + UInt(i) * stride,
+                        space,
+                        sourceKey,
+                        sourceField,
+                        semantic,
+                        semanticLayout,
+                        interpolation,
+                        columns ? i : -1);
+                    if (!columns)
+                        context.path.removeLast();
+                }
+                return;
+            }
+        }
+
+        auto key = builder.createStructKey();
+        flattenNestedStructsTransferKeyDecorations(key, sourceKey);
+        auto field = builder.createStructField(context.result, key, type);
+        copyNameHintAndDebugDecorations(field, sourceField);
+        if (semantic)
+            builder.addSemanticDecoration(
+                key,
+                semantic->getSemanticName(),
+                semantic->getSemanticIndex());
+        if (interpolation && !key->findDecoration<IRInterpolationModeDecoration>())
+            cloneDecoration(interpolation, key);
+        if (physicalLayout)
+        {
+            while (auto oldLayout = key->findDecoration<IRLayoutDecoration>())
+                oldLayout->removeAndDeallocate();
+            IRVarLayout::Builder layoutBuilder(&builder, physicalLayout->getTypeLayout());
+            layoutBuilder.cloneEverythingButOffsetsFrom(physicalLayout);
+            for (auto offset : physicalLayout->getOffsetAttrs())
+            {
+                auto info = layoutBuilder.findOrAddResourceInfo(offset->getResourceKind());
+                info->offset = offset->getOffset();
+                info->space = offset->getSpace();
+            }
+            if (physicalLayout->getTypeLayout()->findSizeAttr(context.locationKind))
+            {
+                auto info = layoutBuilder.findOrAddResourceInfo(context.locationKind);
+                info->offset = location;
+                info->space = space;
+            }
+            builder.addLayoutDecoration(key, layoutBuilder.build());
+        }
+        else if (semanticLayout)
+        {
+            List<IRInst*> attributes;
+            auto layout = semanticLayout->getLayout();
+            for (UInt i = 0; i < layout->getOperandCount(); ++i)
+            {
+                auto operand = layout->getOperand(i);
+                if (as<IRVarOffsetAttr>(operand) || as<IRUserSemanticAttr>(operand) ||
+                    as<IRSystemValueSemanticAttr>(operand) || as<IRStageAttr>(operand))
+                    attributes.add(operand);
+            }
+            builder.addLayoutDecoration(key, builder.getVarLayout(attributes));
+        }
+        context.mapping.fields.add({context.path, field, matrixColumn});
     }
 
-    // Returns a `IRStructType*` without any `IRStructType*` members. `src` may be returned if there
-    // was no struct flattening.
-    // @param mapFieldToField Behavior maps all `IRStructField` of `src` to the new struct
-    // `IRStructFields`s
     IRStructType* maybeFlattenNestedStructs(
         IRBuilder& builder,
         IRStructType* src,
-        MapStructToFlatStruct& mapFieldToField,
-        HashSet<IRStructField*>& varsWithSemanticInfo)
+        MapStructToFlatStruct& mapping,
+        HashSet<IRStructField*>& varsWithSemanticInfo,
+        IRVarLayout* varLayout,
+        LayoutResourceKind locationKind)
     {
-        // Find all values inside struct that need flattening and legalization.
-        bool hasStructTypeMembers = false;
+        bool needsFlattening = false;
         for (auto field : src->getFields())
         {
-            if (as<IRStructType>(field->getFieldType()))
+            auto type = field->getFieldType();
+            if (as<IRStructType>(type) || (usePhysicalVaryingLocations() &&
+                                           (as<IRArrayType>(type) || as<IRMatrixType>(type))))
             {
-                hasStructTypeMembers = true;
+                needsFlattening = true;
                 break;
             }
         }
-        if (!hasStructTypeMembers)
+        if (!needsFlattening)
             return src;
 
-        // We need to:
-        // 1. Make new struct 1:1 with old struct but without nestested structs (flatten)
-        // 2. Ensure semantic attributes propegate. This will create overlapping semantics (can be
-        // handled later).
-        // 3. Store the mapping from old to new struct fields to allow copying a old-struct to
-        // new-struct.
         builder.setInsertAfter(src);
-        auto newStruct = builder.createStructType();
-        copyNameHintAndDebugDecorations(newStruct, src);
-        mapFieldToField.setNode(src);
-        return _flattenNestedStructs(
-            builder,
-            newStruct,
+        auto result = builder.createStructType();
+        copyNameHintAndDebugDecorations(result, src);
+        VaryingFlatteningContext
+            context{builder, result, mapping, varsWithSemanticInfo, locationKind};
+        auto offset = varLayout->findOffsetAttr(locationKind);
+        flattenVaryingType(
+            context,
             src,
-            nullptr,
-            nullptr,
-            mapFieldToField,
-            varsWithSemanticInfo);
+            usePhysicalVaryingLocations() ? varLayout : nullptr,
+            offset ? offset->getOffset() : 0,
+            offset ? offset->getSpace() : 0);
+        return result;
     }
 
     // Replaces all 'IRReturn' by copying the current 'IRReturn' to a new var of type 'newType'.
@@ -3983,8 +3961,45 @@ private:
 protected:
     // Canonicalize each field's semantic to a lowercase (name, index) pair and legalize
     // overlapping indices
-    void fixFieldSemanticsOfFlatStruct(IRStructType* structType)
+    void fixFieldSemanticsOfFlatStruct(
+        IRStructType* structType,
+        IRVarLayout* varLayout = nullptr,
+        LayoutResourceKind kind = LayoutResourceKind::VaryingInput)
     {
+        if (usePhysicalVaryingLocations())
+        {
+            // WGSL locations address the reflected interface. HLSL semantic
+            // indices occupy separate namespaces and cannot allocate those slots.
+            IRBuilder builder(m_module);
+            auto typeLayout = as<IRStructTypeLayout>(varLayout->getTypeLayout());
+            UInt index = 0;
+            for (auto field : structType->getFields())
+            {
+                auto key = field->getKey();
+                auto fieldLayout = findVarLayout(key);
+                UInt base = 0;
+                if (!fieldLayout)
+                {
+                    fieldLayout = typeLayout->getFieldLayout(index);
+                    if (auto offset = varLayout->findOffsetAttr(kind))
+                        base = offset->getOffset();
+                }
+                ++index;
+                auto semantic = fieldLayout->findSystemValueSemanticAttr();
+                if (semantic &&
+                    !semantic->getName().startsWithCaseInsensitive(toSlice("sv_target")))
+                    continue;
+                auto offset = fieldLayout->findOffsetAttr(kind);
+                SLANG_ASSERT(offset);
+                while (auto oldSemantic = key->findDecoration<IRSemanticDecoration>())
+                    oldSemantic->removeAndDeallocate();
+                builder.addSemanticDecoration(
+                    key,
+                    toSlice("user_semantic"),
+                    int(base + offset->getOffset()));
+            }
+            return;
+        }
         // Goal is to ensure we do not have overlapping semantics for the user defined semantics:
         // Note that in WGSL, the semantics can be either `builtin` without index or `location` with
         // index.
@@ -4166,6 +4181,46 @@ protected:
     }
 
 private:
+    void legalizeReturnStruct(
+        IRFunc* func,
+        IRStructType* returnStructType,
+        IRVarLayout* resultLayout)
+    {
+        IRBuilder builder(func);
+        MapStructToFlatStruct mapping;
+        auto flattenedStruct = maybeFlattenNestedStructs(
+            builder,
+            returnStructType,
+            mapping,
+            semanticInfoToRemove,
+            resultLayout,
+            LayoutResourceKind::VaryingOutput);
+        if (returnStructType != flattenedStruct)
+        {
+            _replaceAllReturnInst(
+                builder,
+                func,
+                flattenedStruct,
+                [&](IRBuilder& copyBuilder, IRStructType* dstType, IRInst* srcVal) -> IRInst*
+                {
+                    auto dstVal = copyBuilder.emitVar(dstType);
+                    mapping.emitCopy<(int)MapStructToFlatStruct::CopyOptions::StructIntoFlatStruct>(
+                        copyBuilder,
+                        dstVal,
+                        srcVal);
+                    return copyBuilder.emitLoad(dstVal);
+                });
+            fixUpFuncType(func, flattenedStruct);
+        }
+        fixFieldSemanticsOfFlatStruct(
+            flattenedStruct,
+            resultLayout,
+            LayoutResourceKind::VaryingOutput);
+        ensureStructHasUserSemantic<LayoutResourceKind::VaryingOutput>(
+            flattenedStruct,
+            resultLayout);
+    }
+
     void wrapReturnValueInStruct(EntryPointInfo entryPoint)
     {
         // Wrap return value into a struct if it is not already a struct.
@@ -4196,40 +4251,7 @@ private:
         // If return type is already a struct, just make sure every field has a semantic.
         if (auto returnStructType = as<IRStructType>(returnType))
         {
-            IRBuilder builder(func);
-            MapStructToFlatStruct mapOldFieldToNewField;
-            // Flatten result struct type to ensure we do not have nested semantics
-            auto flattenedStruct = maybeFlattenNestedStructs(
-                builder,
-                returnStructType,
-                mapOldFieldToNewField,
-                semanticInfoToRemove);
-            if (returnStructType != flattenedStruct)
-            {
-                // Replace all return-values with the flattenedStruct we made.
-                _replaceAllReturnInst(
-                    builder,
-                    func,
-                    flattenedStruct,
-                    [&](IRBuilder& copyBuilder, IRStructType* dstType, IRInst* srcVal) -> IRInst*
-                    {
-                        auto srcStructType = as<IRStructType>(srcVal->getDataType());
-                        SLANG_ASSERT(srcStructType);
-                        auto dstVal = copyBuilder.emitVar(dstType);
-                        mapOldFieldToNewField.emitCopy<(
-                            int)MapStructToFlatStruct::CopyOptions::StructIntoFlatStruct>(
-                            copyBuilder,
-                            dstVal,
-                            srcVal);
-                        return builder.emitLoad(dstVal);
-                    });
-                fixUpFuncType(func, flattenedStruct);
-            }
-            // Ensure non-overlapping semantics
-            fixFieldSemanticsOfFlatStruct(flattenedStruct);
-            ensureStructHasUserSemantic<LayoutResourceKind::VaryingOutput>(
-                flattenedStruct,
-                resultLayout);
+            legalizeReturnStruct(func, returnStructType, resultLayout);
             return;
         }
 
@@ -4306,6 +4328,8 @@ private:
         }
 
         fixUpFuncType(func, structType);
+        if (usePhysicalVaryingLocations())
+            legalizeReturnStruct(func, structType, varLayout);
     }
 
     void legalizeSystemValueParameters(EntryPointInfo entryPoint)
@@ -5149,6 +5173,8 @@ public:
     }
 
 protected:
+    bool usePhysicalVaryingLocations() const SLANG_OVERRIDE { return true; }
+
     SystemValueInfo getSystemValueInfo(
         String inSemanticName,
         String* optionalSemanticIndex,

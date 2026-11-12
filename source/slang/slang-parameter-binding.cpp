@@ -2261,18 +2261,20 @@ static RefPtr<TypeLayout> processEntryPointVaryingParameterDecl(
     // the `[[vk::location(...)]]` and `[[vk::index(...)]]` attributes,
     // if present.
     //
-    // TODO: In principle we should *also* be using the data from
-    // `SV_Target<N>` semantics as an equivalent to `location = <N>`
-    // when targetting Vulkan. Right now we are kind of skating by
-    // on the fact that people almost always declare `SV_Target`s
-    // in numerical order, so that our automatic assignment of
-    // `location`s in declaration order coincidentally matches
-    // the `SV_Target` order.
+    // Fragment color semantics also declare a physical location. Apply them
+    // before vk::location so an explicit attribute retains its precedence.
     //
     if (decl &&
         (isKhronosTarget(context->getTargetRequest()) ||
          isMetalTarget(context->getTargetRequest()) || isWGPUTarget(context->getTargetRequest())))
     {
+        if (state.stage == Stage::Fragment &&
+            varLayout->systemValueSemantic.toLower() == "sv_target" &&
+            typeLayout->FindResourceInfo(LayoutResourceKind::VaryingOutput))
+        {
+            auto output = varLayout->findOrAddResourceInfo(LayoutResourceKind::VaryingOutput);
+            output->index = varLayout->systemValueSemanticIndex;
+        }
         if (auto locationAttr = decl->findModifier<GLSLLocationAttribute>())
         {
             int location = locationAttr->value;
@@ -3582,9 +3584,18 @@ static RefPtr<EntryPointLayout> collectEntryPointParameters(
             for (auto rr : resultTypeLayout->resourceInfos)
             {
                 auto entryPointRes = paramsStructLayout->findOrAddResourceInfo(rr.kind);
-                resultLayout->findOrAddResourceInfo(rr.kind)->index =
-                    entryPointRes->count.getFiniteValue();
-                entryPointRes->count += rr.count;
+                if (auto resultRes = resultLayout->FindResourceInfo(rr.kind))
+                {
+                    // Preserve locations assigned by the return semantic or attribute.
+                    entryPointRes->count =
+                        maximum(entryPointRes->count, LayoutSize(resultRes->index) + rr.count);
+                }
+                else
+                {
+                    resultLayout->findOrAddResourceInfo(rr.kind)->index =
+                        entryPointRes->count.getFiniteValue();
+                    entryPointRes->count += rr.count;
+                }
             }
 
             entryPointLayout->resultLayout = resultLayout;
