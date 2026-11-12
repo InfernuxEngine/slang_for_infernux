@@ -2629,10 +2629,6 @@ struct ExtendedTypeLayoutContext
                 // resource kind, but will fall back to information from the
                 // type layout when that is not available.
                 //
-                // TODO: This logic probably needs a bit more work to handle
-                // the case of a combined texture-sampler field that is being
-                // compiled for an API with separate textures and samplers.
-                //
                 auto kindBindingType = _calcBindingType(kind);
                 if (kindBindingType == SLANG_BINDING_TYPE_UNKNOWN)
                 {
@@ -2662,8 +2658,27 @@ struct ExtendedTypeLayoutContext
                         descriptorSet->descriptorRanges.getCount();
                 }
 
-                descriptorSet->descriptorRanges.add(descriptorRange);
-                bindingRange.descriptorRangeCount++;
+                // A combined sampler consumes two table slots on WGSL. Its
+                // IR lowering uses adjacent texture/sampler bindings, including
+                // binding arrays; reflect those physical ranges while keeping
+                // the original combined value as one logical binding range.
+                if (kind == LayoutResourceKind::DescriptorTableSlot &&
+                    bindingType == SLANG_BINDING_TYPE_COMBINED_TEXTURE_SAMPLER &&
+                    resInfo.count.compare(2) == std::partial_ordering::equivalent)
+                {
+                    descriptorRange.bindingType = SLANG_BINDING_TYPE_TEXTURE;
+                    descriptorRange.count = multiplier;
+                    descriptorSet->descriptorRanges.add(descriptorRange);
+                    descriptorRange.bindingType = SLANG_BINDING_TYPE_SAMPLER;
+                    descriptorRange.indexOffset += 1;
+                    descriptorSet->descriptorRanges.add(descriptorRange);
+                    bindingRange.descriptorRangeCount += 2;
+                }
+                else
+                {
+                    descriptorSet->descriptorRanges.add(descriptorRange);
+                    bindingRange.descriptorRangeCount++;
+                }
             }
 
             m_extendedInfo->m_bindingRanges.add(bindingRange);
