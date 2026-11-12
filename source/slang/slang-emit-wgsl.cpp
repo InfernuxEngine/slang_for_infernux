@@ -322,8 +322,36 @@ bool WGSLSourceEmitter::maybeEmitSystemSemantic(IRInst* inst)
     return false;
 }
 
+void WGSLSourceEmitter::emitModuleImpl(IRModule* module, DiagnosticSink* sink)
+{
+    m_entryPointVaryings.clear();
+    auto addFields = [&](IRType* type)
+    {
+        if (auto structure = as<IRStructType>(type))
+            for (auto field : structure->getFields())
+                m_entryPointVaryings.add(field->getKey());
+    };
+    for (auto global : module->getGlobalInsts())
+    {
+        auto function = as<IRFunc>(global);
+        if (!function || !function->findDecoration<IREntryPointDecoration>())
+            continue;
+        addFields(function->getResultType());
+        for (auto parameter : function->getFirstBlock()->getParams())
+        {
+            m_entryPointVaryings.add(parameter);
+            addFields(parameter->getDataType());
+        }
+    }
+    CLikeSourceEmitter::emitModuleImpl(module, sink);
+}
+
 void WGSLSourceEmitter::emitSemanticsPrefixImpl(IRInst* inst)
 {
+    // A helper may retain the author's stage struct as an ordinary value.
+    // Stage attributes belong only to the legalized entry-point signature.
+    if (!m_entryPointVaryings.contains(inst))
+        return;
     if (!maybeEmitSystemSemantic(inst))
     {
         if (auto semanticDecoration = inst->findDecoration<IRSemanticDecoration>())
@@ -1936,6 +1964,9 @@ void WGSLSourceEmitter::emitInterpolationModifiersImpl(
     IRType* valueType,
     IRVarLayout* /* layout */)
 {
+    if (!m_entryPointVaryings.contains(varInst) ||
+        varInst->findDecoration<IRTargetSystemValueDecoration>())
+        return;
     // https://www.w3.org/TR/WGSL/#interpolation
     // We start from WGSL's defaults (perspective, center) and let the decorations override them.
     // HLSL `linear` is perspective-correct interpolation, which is WGSL's `perspective`. WGSL's

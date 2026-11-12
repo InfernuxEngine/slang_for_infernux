@@ -54,6 +54,7 @@ public:
     virtual void _emitType(IRType* type, DeclaratorInfo* declarator) SLANG_OVERRIDE;
     virtual void emitFrontMatterImpl(TargetRequest* targetReq) SLANG_OVERRIDE;
     virtual void emitSemanticsPrefixImpl(IRInst* inst) SLANG_OVERRIDE;
+    virtual void emitModuleImpl(IRModule* module, DiagnosticSink* sink) SLANG_OVERRIDE;
     virtual void emitStructFieldAttributes(
         IRStructType* structType,
         IRStructField* field,
@@ -83,6 +84,7 @@ public:
 
 private:
     bool maybeEmitSystemSemantic(IRInst* inst);
+    HashSet<IRInst*> m_entryPointVaryings;
 
     // Emit the matrix type with 'rowCountWGSL' WGSL-rows and 'colCountWGSL' WGSL-columns
     void emitMatrixType(
