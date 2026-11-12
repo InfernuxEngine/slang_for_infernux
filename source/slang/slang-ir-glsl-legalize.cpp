@@ -140,6 +140,13 @@ struct ScalarizedVal
 // This is the case for a value that is a "tuple" of other values
 struct ScalarizedTupleValImpl : ScalarizedValImpl
 {
+    enum class Kind
+    {
+        Fields,
+        Elements,
+        Columns,
+    };
+
     struct Element
     {
         IRStructKey* key;
@@ -147,6 +154,7 @@ struct ScalarizedTupleValImpl : ScalarizedValImpl
     };
 
     IRType* type;
+    Kind kind = Kind::Fields;
     List<Element> elements;
 };
 
@@ -2105,6 +2113,71 @@ ScalarizedVal createGLSLGlobalVaryingsImpl(
     IRInst* leafVar,
     StringBuilder& nameHintSB)
 {
+    // Raster interfaces use the reflected AoS locations. Retaining array
+    // brackets around individual struct fields would interleave/overlap them.
+    auto systemValue = varLayout->findSystemValueSemanticAttr();
+    bool userLocation =
+        !systemValue || systemValue->getName().startsWithCaseInsensitive(toSlice("sv_target"));
+    if ((stage == Stage::Vertex || stage == Stage::Fragment) && userLocation &&
+        (as<IRArrayType>(type) || as<IRMatrixType>(type)))
+    {
+        auto result = new ScalarizedTupleValImpl();
+        result->type = type;
+        result->kind = ScalarizedTupleValImpl::Kind::Elements;
+        IRType* elementType;
+        IRTypeLayout* elementLayout;
+        UInt count;
+        UInt stride = 1;
+        if (auto array = as<IRArrayType>(type))
+        {
+            elementType = array->getElementType();
+            elementLayout = cast<IRArrayTypeLayout>(typeLayout)->getElementTypeLayout();
+            count = UInt(getIntVal(array->getElementCount()));
+            stride = elementLayout->findSizeAttr(kind)->getFiniteSize();
+        }
+        else
+        {
+            auto matrix = cast<IRMatrixType>(type);
+            bool columns =
+                cast<IRMatrixTypeLayout>(typeLayout)->getMode() == kMatrixLayoutMode_ColumnMajor;
+            if (columns)
+                result->kind = ScalarizedTupleValImpl::Kind::Columns;
+            elementType = builder->getVectorType(
+                matrix->getElementType(),
+                columns ? matrix->getRowCount() : matrix->getColumnCount());
+            count = UInt(getIntVal(columns ? matrix->getColumnCount() : matrix->getRowCount()));
+            IRTypeLayout::Builder layoutBuilder(builder);
+            layoutBuilder.addResourceUsage(kind, LayoutSize(1));
+            elementLayout = layoutBuilder.build();
+        }
+        IRVarLayout::Builder layoutBuilder(builder, elementLayout);
+        layoutBuilder.cloneEverythingButOffsetsFrom(varLayout);
+        auto elementVarLayout = layoutBuilder.build();
+        auto nameLength = nameHintSB.getLength();
+        for (UInt i = 0; i < count; ++i)
+        {
+            nameHintSB.reduceLength(nameLength);
+            nameHintSB << "_" << i;
+            auto element = createGLSLGlobalVaryingsImpl(
+                context,
+                codeGenContext,
+                builder,
+                elementType,
+                elementVarLayout,
+                elementLayout,
+                kind,
+                stage,
+                bindingIndex + i * stride,
+                bindingSpace,
+                declarator,
+                outerParamInfo,
+                leafVar,
+                nameHintSB);
+            result->elements.add({nullptr, element});
+        }
+        nameHintSB.reduceLength(nameLength);
+        return ScalarizedVal::tuple(result);
+    }
     if (as<IRVoidType>(type))
     {
         return ScalarizedVal();
@@ -2670,6 +2743,15 @@ void assign(
                     // that is not a tuple. We will perform assignment
                     // element-by-element.
                     auto rightTupleVal = as<ScalarizedTupleValImpl>(right.impl);
+                    if (rightTupleVal->kind != ScalarizedTupleValImpl::Kind::Fields)
+                    {
+                        assign(
+                            builder,
+                            left,
+                            ScalarizedVal::value(materializeValue(builder, right)),
+                            index);
+                        break;
+                    }
                     Index elementCount = rightTupleVal->elements.getCount();
 
                     for (Index ee = 0; ee < elementCount; ++ee)
@@ -2695,6 +2777,39 @@ void assign(
             // We have a tuple, so we are going to need to try and assign
             // to each of its constituent fields.
             auto leftTupleVal = as<ScalarizedTupleValImpl>(left.impl);
+            if (leftTupleVal->kind != ScalarizedTupleValImpl::Kind::Fields)
+            {
+                auto matrix = as<IRMatrixType>(leftTupleVal->type);
+                auto value = matrix ? materializeValue(builder, right) : nullptr;
+                for (UInt i = 0; i < UInt(leftTupleVal->elements.getCount()); ++i)
+                {
+                    ScalarizedVal element;
+                    if (!matrix)
+                        element = getSubscriptVal(
+                            builder,
+                            cast<IRArrayType>(leftTupleVal->type)->getElementType(),
+                            right,
+                            i);
+                    else if (leftTupleVal->kind == ScalarizedTupleValImpl::Kind::Columns)
+                    {
+                        List<IRInst*> scalars;
+                        for (IRIntegerValue row = 0; row < getIntVal(matrix->getRowCount()); ++row)
+                            scalars.add(builder->emitElementExtract(
+                                builder->emitElementExtract(value, row),
+                                i));
+                        auto vectorType =
+                            builder->getVectorType(matrix->getElementType(), matrix->getRowCount());
+                        element = ScalarizedVal::value(builder->emitMakeVector(
+                            vectorType,
+                            scalars.getCount(),
+                            scalars.getBuffer()));
+                    }
+                    else
+                        element = ScalarizedVal::value(builder->emitElementExtract(value, i));
+                    assign(builder, leftTupleVal->elements[i].val, element, index);
+                }
+                break;
+            }
             Index elementCount = leftTupleVal->elements.getCount();
 
             for (Index ee = 0; ee < elementCount; ++ee)
@@ -2748,6 +2863,15 @@ ScalarizedVal getSubscriptVal(
     case ScalarizedVal::Flavor::tuple:
         {
             auto inputTuple = val.impl.as<ScalarizedTupleValImpl>();
+            if (inputTuple->kind != ScalarizedTupleValImpl::Kind::Fields)
+            {
+                if (inputTuple->kind == ScalarizedTupleValImpl::Kind::Elements)
+                    if (auto index = as<IRIntLit>(indexVal))
+                        return inputTuple->elements[Index(index->getValue())].val;
+                auto storage = builder->emitVar(inputTuple->type);
+                builder->emitStore(storage, materializeValue(builder, val));
+                return ScalarizedVal::address(builder->emitElementAddress(storage, indexVal));
+            }
 
             RefPtr<ScalarizedTupleValImpl> resultTuple = new ScalarizedTupleValImpl();
             resultTuple->type = elementType;
@@ -2829,6 +2953,24 @@ IRInst* materializeTupleValue(IRBuilder* builder, ScalarizedVal val)
 
     Index elementCount = tupleVal->elements.getCount();
     auto type = tupleVal->type;
+    if (tupleVal->kind != ScalarizedTupleValImpl::Kind::Fields)
+    {
+        List<IRInst*> elements;
+        for (auto element : tupleVal->elements)
+            elements.add(materializeValue(builder, element.val));
+        if (auto matrix = as<IRMatrixType>(type))
+        {
+            List<IRInst*> scalars;
+            bool columns = tupleVal->kind == ScalarizedTupleValImpl::Kind::Columns;
+            for (IRIntegerValue row = 0; row < getIntVal(matrix->getRowCount()); ++row)
+                for (IRIntegerValue col = 0; col < getIntVal(matrix->getColumnCount()); ++col)
+                    scalars.add(builder->emitElementExtract(
+                        elements[columns ? col : row],
+                        columns ? row : col));
+            return builder->emitMakeMatrix(type, scalars.getCount(), scalars.getBuffer());
+        }
+        return builder->emitMakeArray(type, elements.getCount(), elements.getBuffer());
+    }
 
     if (auto arrayType = as<IRArrayType>(type))
     {
@@ -2995,6 +3137,8 @@ ScalarizedVal getPtrToVal(IRBuilder* builder, ScalarizedVal val)
             Index elementCount = inputTupleValInfo->elements.getCount();
 
             auto outputTupleValInfo = new ScalarizedTupleValImpl();
+            outputTupleValInfo->type = inputTupleValInfo->type;
+            outputTupleValInfo->kind = inputTupleValInfo->kind;
             for (Index ee = 0; ee < elementCount; ++ee)
             {
                 auto inputElement = inputTupleValInfo->elements[ee];
@@ -3053,6 +3197,8 @@ ScalarizedVal dereferenceVal(IRBuilder* builder, ScalarizedVal ptr)
             Index elementCount = ptrTupleInfo->elements.getCount();
 
             auto valTupleInfo = new ScalarizedTupleValImpl();
+            valTupleInfo->type = ptrTupleInfo->type;
+            valTupleInfo->kind = ptrTupleInfo->kind;
             for (Index ee = 0; ee < elementCount; ++ee)
             {
                 auto ptrTupleElement = ptrTupleInfo->elements[ee];
@@ -4102,11 +4248,9 @@ void tryReplaceUsesOfStageInput(
                         break;
                     case kIROp_GetElementPtr:
                         {
-                            auto arrayType = as<IRArrayTypeBase>(tupleVal->type);
-                            SLANG_ASSERT(arrayType);
                             auto subscriptVal = getSubscriptVal(
                                 &builder,
-                                (IRType*)arrayType->getElementType(),
+                                getElementType(builder, tupleVal->type),
                                 val,
                                 user->getOperand(1));
                             tryReplaceUsesOfStageInput(context, subscriptVal, user);

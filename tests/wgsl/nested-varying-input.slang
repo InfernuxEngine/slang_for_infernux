@@ -5,6 +5,8 @@
 //TEST:SIMPLE(filecheck=AGGREGATE_ROW): -target wgsl -stage fragment -entry aggregateFragment -matrix-layout-row-major
 //TEST:SIMPLE(filecheck=AGGREGATE_COL): -target wgsl -stage fragment -entry aggregateFragment
 //TEST:SIMPLE(filecheck=DIRECT): -target wgsl -stage fragment -entry directTarget
+//TEST:SIMPLE(filecheck=SPIRV_ROW): -target spirv-asm -stage vertex -entry aggregateVertex -matrix-layout-row-major
+//TEST:SIMPLE(filecheck=SPIRV_COL): -target spirv-asm -stage vertex -entry aggregateVertex -matrix-layout-column-major
 
 // Tests three aspects:
 //  1. Flatten the nested struct for the return type of the entry-point
@@ -82,6 +84,12 @@ struct AggregateOutput
     float2x3 columns : COLUMNS;
 };
 
+//SPIRV_ROW-DAG: OpDecorate %entryPointParam_aggregateVertex_data_0_samples_0 Location 2
+//SPIRV_ROW-DAG: OpDecorate %entryPointParam_aggregateVertex_columns_1 Location 11
+//SPIRV_ROW-DAG: %entryPointParam_aggregateVertex_data_0_axes_0 = OpVariable %_ptr_Output_v3float
+//SPIRV_COL-DAG: OpDecorate %entryPointParam_aggregateVertex_data_0_samples_0 Location 3
+//SPIRV_COL-DAG: OpDecorate %entryPointParam_aggregateVertex_columns_2 Location 14
+//SPIRV_COL-DAG: %entryPointParam_aggregateVertex_data_0_axes_0 = OpVariable %_ptr_Output_v2float
 //AGGREGATE_ROW-DAG: @location(0) {{[^:]+}} : vec3<f32>
 //AGGREGATE_ROW-DAG: @location(1) {{[^:]+}} : vec3<f32>
 //AGGREGATE_ROW-DAG: @location(2) {{[^:]+}} : vec2<f32>
