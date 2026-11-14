@@ -17,7 +17,16 @@ using namespace Slang;
 static const char kExperimentalDependencySource[] = R"(
     [ExperimentalModule]
     module ExperimentalDependency;
-    public struct Marker {}
+    public interface IMarker
+    {
+        int first();
+        int second();
+    }
+    public struct Marker : IMarker
+    {
+        public int first() { return 1; }
+        public int second() { return 2; }
+    }
 )";
 
 static const char kOrdinaryDependencySource[] = R"(
@@ -28,7 +37,12 @@ static const char kOrdinaryDependencySource[] = R"(
 static const char kOrdinaryWrapperSource[] = R"(
     module OrdinaryWrapper;
     import ExperimentalDependency;
-    public struct WrappedMarker { Marker value; }
+    public struct WrappedMarker : IMarker
+    {
+        Marker value;
+        public int first() { return value.first(); }
+        public int second() { return value.second(); }
+    }
 )";
 
 static const UnownedStringSlice kExperimentalFeatureDiagnosticCode("error[E00104]");

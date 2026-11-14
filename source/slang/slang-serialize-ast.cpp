@@ -1516,10 +1516,13 @@ ModuleDecl* ASTSerialReadContext::_readImportedModule(ASTSerializer const& seria
     if (!module)
     {
         if (_sink)
-            _sink->diagnose(Diagnostics::ImportFailed{
-                .path = moduleName ? moduleName->text : String(),
-                .location = _requestingSourceLoc});
-        return nullptr;
+            _sink->diagnose(
+                Diagnostics::ImportFailed{
+                    .path = moduleName ? moduleName->text : String(),
+                    .location = _requestingSourceLoc});
+        // A failed dependency cannot supply declaration identities. Continuing
+        // would turn distinct witness-table keys into the same null key.
+        SLANG_ABORT_COMPILATION("cannot deserialize an unavailable imported module");
     }
     return module->getModuleDecl();
 }
@@ -1566,9 +1569,10 @@ NodeBase* ASTSerialReadContext::_readImportedDecl(ASTSerializer const& serialize
         importedFromModule->findExportedDeclByMangledName(mangledName.getUnownedSlice());
     if (!importedDecl)
     {
-        _sink->diagnose(Diagnostics::CannotResolveImportedDecl{
-            .declName = mangledName,
-            .moduleName = importedFromModule->getName()});
+        _sink->diagnose(
+            Diagnostics::CannotResolveImportedDecl{
+                .declName = mangledName,
+                .moduleName = importedFromModule->getName()});
     }
     return importedDecl;
 }
@@ -2106,6 +2110,7 @@ Decl* ASTSerialReadContext::readFossilizedDecl(Fossilized<Decl>* fossilizedDecl)
 
     Decl* decl = nullptr;
     serialize(serializer, decl);
+    reader.flush();
     return decl;
 }
 
