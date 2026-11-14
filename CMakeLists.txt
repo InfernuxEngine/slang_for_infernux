@@ -208,6 +208,11 @@ set(SLANG_DISABLE_NOTE_IDS
 
 option(SLANG_ENABLE_GFX "Enable gfx targets" ON)
 option(
+    SLANG_ENABLE_BUILTIN_SPIRV_TOOLS
+    "Link the SPIR-V optimizer, linker and diagnostics into the compiler"
+    OFF
+)
+option(
     SLANG_EMBED_STANDARD_MODULES
     "Embed compressed standard modules directly in the compiler instead of installing loose files"
     OFF
@@ -890,7 +895,7 @@ if(
     )
 endif()
 if(
-    SLANG_ENABLE_SLANG_GLSLANG
+    (SLANG_ENABLE_SLANG_GLSLANG OR SLANG_ENABLE_BUILTIN_SPIRV_TOOLS)
     AND NOT SLANG_USE_SYSTEM_SPIRV_TOOLS
     AND NOT SLANG_OVERRIDE_SPIRV_TOOLS_PATH
 )

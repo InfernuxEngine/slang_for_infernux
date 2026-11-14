@@ -216,7 +216,7 @@ set(SLANG_BUILD_MIMALLOC OFF)
 if(SLANG_ENABLE_MIMALLOC)
     set(SLANG_BUILD_MIMALLOC ON)
 elseif(
-    SLANG_ENABLE_SLANG_GLSLANG
+    (SLANG_ENABLE_SLANG_GLSLANG OR SLANG_ENABLE_BUILTIN_SPIRV_TOOLS)
     AND NOT SLANG_USE_SYSTEM_SPIRV_TOOLS
     AND SLANG_ENABLE_SPIRV_TOOLS_MIMALLOC
 )
@@ -288,7 +288,7 @@ if(NOT TARGET SPIRV-Headers)
     endif()
 endif()
 
-if(SLANG_ENABLE_SLANG_GLSLANG)
+if(SLANG_ENABLE_SLANG_GLSLANG OR SLANG_ENABLE_BUILTIN_SPIRV_TOOLS)
     # When using spirv headers via find_package, SPIRV-Headers_SOURCE_DIR is not set
     # SPIRV-Tools requires that variable, as it uses it to detect if SPIRV-Headers is provided by the consumer.
     # Fake a source build by setting it here. Ideally SPIRV-Tools should not depend on _SOURCE_DIR
@@ -373,7 +373,7 @@ if(SLANG_ENABLE_SLANG_GLSLANG)
         endif()
     endif()
 
-    if(NOT ${SLANG_USE_SYSTEM_GLSLANG})
+    if(SLANG_ENABLE_SLANG_GLSLANG AND NOT ${SLANG_USE_SYSTEM_GLSLANG})
         # glslang
         set(SKIP_GLSLANG_INSTALL ON)
         set(ENABLE_OPT ON)

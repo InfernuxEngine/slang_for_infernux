@@ -12,6 +12,13 @@ slang_add_target(
     PRECOMPILE_HEADERS
         ${slang_SOURCE_DIR}/source/core/slang-basic.h
 )
+target_compile_definitions(
+    compiler-core PRIVATE
+    SLANG_ENABLE_BUILTIN_SPIRV_TOOLS=$<BOOL:${SLANG_ENABLE_BUILTIN_SPIRV_TOOLS}>
+)
+if(SLANG_ENABLE_BUILTIN_SPIRV_TOOLS)
+    target_link_libraries(compiler-core PRIVATE SPIRV-Tools-opt SPIRV-Tools-link)
+endif()
 if(NOT MSVC)
     # This is necessary to compile the DXC headers.
     # Also skip PCH for this file since -fms-extensions conflicts with PCH.

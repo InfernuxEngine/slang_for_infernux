@@ -3637,6 +3637,11 @@ static SlangResult createArtifactFromIR(
                                               PassThroughMode::SpirvOpt,
                                               codeGenContext->getSink())
                                         : nullptr;
+    // Required processing must complete before the bytecode can be published.
+    // A missing optimizer previously returned usable-looking code alongside an
+    // error diagnostic, so API callers could unknowingly execute it unchanged.
+    if (needsDownstreamCompiler && !compiler)
+        return SLANG_FAIL;
     if (compiler)
     {
 #if 0
@@ -3756,10 +3761,6 @@ static SlangResult createArtifactFromIR(
     // optimizer's diagnostics have been reported so that a failed optimization is not masked by
     // a failed split.
     //
-    // If a required downstream compiler could not be loaded, E00100 is already in the sink and
-    // the natively emitted module is final. The split still runs, so a split compile ends the same
-    // way as a non-split one: the end-to-end compile fails on the reported error, and an API
-    // caller receives the unprocessed module alongside the diagnostic.
     if (targetCompilerOptions.shouldEmitSeparateDebugInfo())
     {
         auto strippedArtifact = ArtifactUtil::createArtifactForCompileTarget(SLANG_SPIRV);

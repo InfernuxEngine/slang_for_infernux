@@ -11,6 +11,7 @@
 #include "core/slang-string-util.h"
 #include "slang-artifact-associated-impl.h"
 #include "slang-artifact-desc-util.h"
+#include "slang-builtin-spirv-tools.h"
 #include "slang-com-helper.h"
 #include "slang-include-system.h"
 #include "slang-source-loc.h"
@@ -622,12 +623,31 @@ SlangResult GlslangDownstreamCompilerUtil::locateCompilers(
     return locateGlslangSpirvDownstreamCompiler(path, loader, set, SLANG_PASS_THROUGH_GLSLANG);
 }
 
+static SlangResult locateSpirvCompiler(
+    const String& path,
+    ISlangSharedLibraryLoader* loader,
+    SlangPassThrough compilerType,
+    DownstreamCompilerSet* set)
+{
+#if SLANG_ENABLE_BUILTIN_SPIRV_TOOLS
+    SLANG_UNUSED(path);
+    SLANG_UNUSED(loader);
+    auto compiler = new GlslangDownstreamCompiler(compilerType);
+    ComPtr<IDownstreamCompiler> retained(compiler);
+    SLANG_RETURN_ON_FAIL(compiler->init(getBuiltinSpirvToolsLibrary()));
+    set->addCompiler(retained);
+    return SLANG_OK;
+#else
+    return locateGlslangSpirvDownstreamCompiler(path, loader, set, compilerType);
+#endif
+}
+
 SlangResult SpirvOptDownstreamCompilerUtil::locateCompilers(
     const String& path,
     ISlangSharedLibraryLoader* loader,
     DownstreamCompilerSet* set)
 {
-    return locateGlslangSpirvDownstreamCompiler(path, loader, set, SLANG_PASS_THROUGH_SPIRV_OPT);
+    return locateSpirvCompiler(path, loader, SLANG_PASS_THROUGH_SPIRV_OPT, set);
 }
 
 SlangResult SpirvDisDownstreamCompilerUtil::locateCompilers(
@@ -635,7 +655,7 @@ SlangResult SpirvDisDownstreamCompilerUtil::locateCompilers(
     ISlangSharedLibraryLoader* loader,
     DownstreamCompilerSet* set)
 {
-    return locateGlslangSpirvDownstreamCompiler(path, loader, set, SLANG_PASS_THROUGH_SPIRV_DIS);
+    return locateSpirvCompiler(path, loader, SLANG_PASS_THROUGH_SPIRV_DIS, set);
 }
 
 SlangResult SpirvLinkDownstreamCompilerUtil::locateCompilers(
@@ -643,7 +663,7 @@ SlangResult SpirvLinkDownstreamCompilerUtil::locateCompilers(
     ISlangSharedLibraryLoader* loader,
     DownstreamCompilerSet* set)
 {
-    return locateGlslangSpirvDownstreamCompiler(path, loader, set, SLANG_PASS_THROUGH_SPIRV_LINK);
+    return locateSpirvCompiler(path, loader, SLANG_PASS_THROUGH_SPIRV_LINK, set);
 }
 
 #else // SLANG_ENABLE_GLSLANG_SUPPORT
