@@ -11,6 +11,86 @@
 
 using namespace Slang;
 
+SLANG_UNIT_TEST(isParameterLocationUsedLocalStructCoverage)
+{
+    const char* source = R"(
+        [[vk::binding(0, 0)]] StructuredBuffer<float> color_values;
+        [[vk::binding(1, 0)]] StructuredBuffer<float> alpha_and_depth;
+        struct SurfaceResult { float4 color; float depth; };
+        [ForceInline]
+        SurfaceResult evaluate()
+        {
+            SurfaceResult result;
+            result.color = float4(color_values[0], color_values[1], color_values[2], alpha_and_depth[0]);
+            result.depth = alpha_and_depth[1];
+            return result;
+        }
+        [shader("fragment")]
+        float coverage() : SV_Depth
+        {
+            SurfaceResult result = evaluate();
+            clip(result.color.a - 0.125);
+            return result.depth;
+        }
+    )";
+    ComPtr<slang::IGlobalSession> globalSession;
+    SLANG_CHECK(SLANG_SUCCEEDED(slang::createGlobalSession(globalSession.writeRef())));
+    slang::TargetDesc targets[2] = {};
+    targets[0].format = SLANG_SPIRV;
+    targets[0].profile = globalSession->findProfile("spirv_1_5");
+    targets[1].format = SLANG_WGSL;
+    slang::CompilerOptionEntry directSpirv = {};
+    directSpirv.name = slang::CompilerOptionName::EmitSpirvMethod;
+    directSpirv.value.intValue0 = SLANG_EMIT_SPIRV_DIRECTLY;
+    slang::SessionDesc description = {};
+    description.targets = targets;
+    description.targetCount = 2;
+    description.compilerOptionEntries = &directSpirv;
+    description.compilerOptionEntryCount = 1;
+    ComPtr<slang::ISession> session;
+    SLANG_CHECK(SLANG_SUCCEEDED(globalSession->createSession(description, session.writeRef())));
+    ComPtr<slang::IBlob> diagnostics;
+    auto module = session->loadModuleFromSourceString(
+        "local_struct_coverage",
+        "local_struct_coverage.slang",
+        source,
+        diagnostics.writeRef());
+    SLANG_CHECK(module != nullptr);
+    ComPtr<slang::IEntryPoint> entry;
+    SLANG_CHECK(SLANG_SUCCEEDED(module->getDefinedEntryPoint(0, entry.writeRef())));
+    slang::IComponentType* components[] = {module, entry.get()};
+    ComPtr<slang::IComponentType> program;
+    SLANG_CHECK(SLANG_SUCCEEDED(session->createCompositeComponentType(
+        components,
+        2,
+        program.writeRef(),
+        diagnostics.writeRef())));
+    ComPtr<slang::IComponentType> linked;
+    SLANG_CHECK(SLANG_SUCCEEDED(program->link(linked.writeRef(), diagnostics.writeRef())));
+    for (SlangInt target = 0; target < 2; ++target)
+    {
+        ComPtr<slang::IBlob> code;
+        SLANG_CHECK(SLANG_SUCCEEDED(
+            linked->getEntryPointCode(0, target, code.writeRef(), diagnostics.writeRef())));
+        ComPtr<slang::IMetadata> metadata;
+        SLANG_CHECK(SLANG_SUCCEEDED(
+            linked->getEntryPointMetadata(0, target, metadata.writeRef(), diagnostics.writeRef())));
+        bool used = true;
+        SLANG_CHECK(SLANG_SUCCEEDED(metadata->isParameterLocationUsed(
+            SLANG_PARAMETER_CATEGORY_DESCRIPTOR_TABLE_SLOT,
+            0,
+            0,
+            used)));
+        SLANG_CHECK(!used);
+        SLANG_CHECK(SLANG_SUCCEEDED(metadata->isParameterLocationUsed(
+            SLANG_PARAMETER_CATEGORY_DESCRIPTOR_TABLE_SLOT,
+            0,
+            1,
+            used)));
+        SLANG_CHECK(used);
+    }
+}
+
 // Test that the isParameterLocationUsed API works.
 
 SLANG_UNIT_TEST(isParameterLocationUsedReflection)

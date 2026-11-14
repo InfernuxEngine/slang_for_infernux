@@ -4,6 +4,8 @@
 namespace Slang
 {
 struct IRModule;
+// Optimize local data after source diagnostics and differentiation.
+bool normalizeLocalStructStores(IRModule* module);
 struct IRGlobalValueWithCode;
 struct IRInst;
 

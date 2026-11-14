@@ -200,7 +200,7 @@ static void collectStoredVarsInCase(
         {
             if (auto store = as<IRStore>(inst))
             {
-                if (auto var = as<IRVar>(store->getPtr()))
+                if (auto var = as<IRVar>(getRootAddr(store->getPtr())))
                 {
                     storedVars.add(var);
                 }
@@ -253,10 +253,19 @@ static void collectLoadedVarsInCase(
         {
             if (auto load = as<IRLoad>(inst))
             {
-                if (auto var = as<IRVar>(load->getPtr()))
+                if (auto var = as<IRVar>(getRootAddr(load->getPtr())))
                 {
                     loadedVars.add(var);
                 }
+            }
+            // A field store preserves the other fields, so normalizing it
+            // introduces a root read. Account for that on the original CFG.
+            if (auto store = as<IRStore>(inst))
+            {
+                auto root = getRootAddr(store->getPtr());
+                if (root != store->getPtr())
+                    if (auto var = as<IRVar>(root))
+                        loadedVars.add(var);
             }
         }
 
@@ -1397,6 +1406,96 @@ static void breakCriticalEdges(ConstructSSAContext* context)
     {
         IRBuilder::insertBlockAlongEdge(context->module, edge, true);
     }
+}
+
+
+// Collect field stores only when a local's address never escapes this load/store tree.
+// Calls and array addresses need alias analysis that this optimization does not perform.
+static bool collectLocalFieldStores(IRInst* address, IRVar* root, List<IRStore*>& stores)
+{
+    for (auto use = address->firstUse; use; use = use->nextUse)
+    {
+        auto user = use->getUser();
+        if (as<IRDecoration>(user))
+            continue;
+        switch (user->getOp())
+        {
+        case kIROp_Load:
+            break;
+        case kIROp_Store:
+            if (use != &cast<IRStore>(user)->ptr)
+                return false;
+            if (address != root)
+                stores.add(cast<IRStore>(user));
+            break;
+        case kIROp_FieldAddress:
+            if (use != &user->getOperands()[0] || !collectLocalFieldStores(user, root, stores))
+                return false;
+            break;
+        default:
+            return false;
+        }
+    }
+    return true;
+}
+
+// Consider `Result r; r.color = shade(); r.depth = z; return r;`. Field stores prevent
+// promotion of r, so an alpha/depth consumer keeps the unused color computation alive.
+// Whole-value updates let the existing SSA and DCE passes remove those unused fields.
+static bool normalizeLocalFieldStores(ConstructSSAContext* context)
+{
+    List<IRStore*> stores;
+    for (auto block : context->globalVal->getBlocks())
+        for (auto inst : block->getChildren())
+            if (auto var = as<IRVar>(inst))
+            {
+                if (context->switchFallThroughVars.contains(var))
+                    continue;
+                auto pointer = as<IRPtrTypeBase>(var->getDataType());
+                auto structure = as<IRStructType>(pointer->getValueType());
+                if (!structure || structure->findDecoration<IRNonCopyableTypeDecoration>())
+                    continue;
+                List<IRStore*> candidate;
+                if (collectLocalFieldStores(var, var, candidate))
+                    stores.addRange(candidate);
+            }
+    IRBuilder builder(context->module);
+    for (auto store : stores)
+    {
+        IRBuilderSourceLocRAII sourceLocation(&builder, store->sourceLoc);
+        builder.setInsertBefore(store);
+        List<IRInst*> fields;
+        auto root = store->getPtr();
+        while (root->getOp() == kIROp_FieldAddress)
+        {
+            fields.add(root->getOperand(1));
+            root = root->getOperand(0);
+        }
+        fields.reverse();
+        auto update = builder.emitUpdateElement(
+            builder.emitLoad(root),
+            fields.getArrayView(),
+            store->getVal());
+        builder.emitStore(root, update);
+        store->removeAndDeallocate();
+    }
+    return stores.getCount() != 0;
+}
+
+// Runs in target optimization after source diagnostics and differentiation.
+bool normalizeLocalStructStores(IRModule* module)
+{
+    bool changed = false;
+    for (auto inst : module->getGlobalInsts())
+        if (auto func = as<IRFunc>(inst))
+        {
+            ConstructSSAContext context;
+            context.globalVal = func;
+            context.module = module;
+            detectSwitchFallThroughVars(&context);
+            changed |= normalizeLocalFieldStores(&context);
+        }
+    return changed;
 }
 
 // Construct SSA form for a global value with code

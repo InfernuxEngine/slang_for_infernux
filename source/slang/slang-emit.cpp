@@ -2738,6 +2738,7 @@ Result linkAndOptimizeIR(
     if (!fastIRSimplificationOptions.minimalOptimization)
     {
         IRSimplificationOptions simplificationOptions = fastIRSimplificationOptions;
+        SLANG_PASS(normalizeLocalStructStores);
         simplificationOptions.cfgOptions.removeTrivialSingleIterationLoops = true;
         SLANG_PASS(simplifyIR, targetProgram, simplificationOptions, sink);
     }
