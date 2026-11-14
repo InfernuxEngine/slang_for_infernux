@@ -159,6 +159,7 @@ struct ShaderBindingRange
         switch (category)
         {
         case slang::ConstantBuffer:
+        case slang::PushConstantBuffer:
         case slang::ShaderResource:
         case slang::UnorderedAccess:
         case slang::SamplerState:
