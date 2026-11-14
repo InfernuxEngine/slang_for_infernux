@@ -246,27 +246,15 @@ jobs:
         if: matrix.install_test == 'true' && matrix.windows_only != 'true'
         run: |
           cmake --install build --config "$cmake_config" --prefix install
-          # The monolithic standard-module library must be installed *in place of*
-          # the loose module tree: the single library is present and no loose
-          # *.slang-module files are installed. Exclusivity is checked on the
-          # install prefix: the build tree intentionally contains both forms, so
-          # the absence of loose modules is only meaningful after install.
-          # See SLANG_BUILD_MONOLITHIC_STANDARD_MODULE_LIBRARY.
-          if [ "${{ matrix.option }}" = "SLANG_BUILD_MONOLITHIC_STANDARD_MODULE_LIBRARY" ]; then
+          # Embedded modules live in the compiler; the install has no loose IR tree.
+          if [ "${{ matrix.option }}" = "SLANG_EMBED_STANDARD_MODULES" ]; then
             loose=$(find install -name '*.slang-module')
             if [ -n "$loose" ]; then
-              echo "ERROR: loose .slang-module files were installed alongside the monolithic library:"
+              echo "ERROR: loose .slang-module files were installed with embedded modules:"
               echo "$loose"
               exit 1
             fi
-            lib=$(find install \( -name 'slang-standard-modules*.dll' -o -name 'libslang-standard-modules*.so' -o -name 'libslang-standard-modules*.dylib' \))
-            if [ -z "$lib" ]; then
-              echo "ERROR: the monolithic standard-modules library was not installed"
-              find install -iname '*standard-modules*' || true
-              exit 1
-            fi
-            echo "Monolithic install OK: loose modules absent, library present:"
-            echo "$lib"
+            echo "Embedded install OK: no loose modules or sidecar library required."
           fi
           # Minimal consumer that resolves the exported slang::slang target.
           mkdir -p consumer
@@ -284,17 +272,9 @@ jobs:
           # elsewhere; see SLANG_CMAKE_CONFIG_DIR in CMakeLists.txt).
           cmake -S consumer -B consumer/build -DCMAKE_PREFIX_PATH="$PWD/install"
 
-      # Compile a shader that imports standard modules (slang.numerics,
-      # slang.functional) with the *installed* compiler, so the modules are
-      # resolved through the monolithic library -- exercising its lookup, LZ4
-      # decompression, and IR deserialization end to end. The install-prefix
-      # file checks above prove presence/absence but cannot catch an incomplete
-      # payload, an export mismatch, or a decompression failure; this does. The
-      # negative case removes the library and requires the same import to fail,
-      # proving the library (not a stray loose file) was the source. This
-      # container is native x86_64 Linux, so the built compiler always runs.
-      - name: Verify monolithic library import at runtime (${{ matrix.option }})
-        if: matrix.option == 'SLANG_BUILD_MONOLITHIC_STANDARD_MODULE_LIBRARY'
+      # Compile with the installed compiler and no loose standard-module tree.
+      - name: Verify embedded standard-module import at runtime (${{ matrix.option }})
+        if: matrix.option == 'SLANG_EMBED_STANDARD_MODULES'
         run: |
           slangc="install/bin/slangc"
           export PATH="$PWD/install/bin:$PATH"
@@ -302,20 +282,5 @@ jobs:
           shader="tests/functional/numerics-interoperability.slang"
           args=(-target hlsl -entry computeMain -stage compute -experimental-feature)
 
-          echo "== positive: standard-module import must succeed through the installed library =="
-          "$slangc" "$shader" "${args[@]}" -o "$RUNNER_TEMP/monolithic-positive.hlsl"
-
-          lib=$(find install -name 'libslang-standard-modules*.so' | head -n1)
-          if [ -z "$lib" ]; then
-            echo "ERROR: could not locate the installed monolithic library for the negative test"
-            exit 1
-          fi
-          echo "== negative: with $lib removed, the same import must fail =="
-          mv "$lib" "$lib.disabled"
-          if "$slangc" "$shader" "${args[@]}" -o "$RUNNER_TEMP/monolithic-negative.hlsl" 2>/dev/null; then
-            echo "ERROR: import unexpectedly succeeded with the monolithic library removed"
-            mv "$lib.disabled" "$lib"
-            exit 1
-          fi
-          mv "$lib.disabled" "$lib"
-          echo "Runtime import check passed: import works via the library and fails without it."
+          "$slangc" "$shader" "${args[@]}" -o "$RUNNER_TEMP/embedded-standard-modules.hlsl"
+          echo "Runtime import check passed with only the installed compiler."

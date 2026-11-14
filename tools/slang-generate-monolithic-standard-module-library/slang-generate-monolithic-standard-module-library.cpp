@@ -1,6 +1,6 @@
 // slang-generate-monolithic-standard-module-library.cpp
 //
-// Build-time generator for the optional slang-standard-modules library.
+// Build-time generator for compiler-embedded standard modules.
 //
 // Scans a built standard-module tree, LZ4-compresses every *.slang-module, and
 // emits a C++ source that embeds the compressed bytes plus a lookup table keyed
@@ -8,7 +8,7 @@
 // compresses: the serialized standard modules are large and expensive to compile
 // as a plain byte-array source, so the payload is compressed first. The matching
 // decompression at load uses the same LZ4CompressionSystem (see
-// tryLoadStandardModuleFromMonolithicLibrary in source/slang/slang-session.cpp).
+// loadEmbeddedStandardModule in source/slang-monolithic-standard-module-library).
 //
 // Usage:  slang-generate-monolithic-standard-module-library <module-root-dir> <output-cpp>
 //
@@ -145,6 +145,8 @@ int main(int argc, char** argv)
         char buf[8];
         for (size_t b = 0; b < compressedSize; ++b)
         {
+            if (b % 16 == 0)
+                sb << "\n    ";
             snprintf(buf, sizeof(buf), "0x%02x,", data[b]);
             sb << buf;
         }

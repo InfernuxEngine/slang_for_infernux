@@ -333,7 +333,7 @@ set(slang_public_lib_args
 # Slang itself
 #
 
-if(NOT SLANG_EMBED_CORE_MODULE)
+if(NOT SLANG_EMBED_CORE_MODULE AND NOT SLANG_EMBED_STANDARD_MODULES)
     # If we're not embedding core module we can just do a normal build of slang,
     # including all the options, this can also serve as our no embedded core module
     # library for slang-bootstrap (not that we need that anyway)
@@ -349,9 +349,8 @@ if(NOT SLANG_EMBED_CORE_MODULE)
     )
     add_library(slang-without-embedded-core-module ALIAS slang)
 else()
-    # However if we're embedding core module, we need to make two different
-    # libraries, one with the embedded core module and one without, so first define
-    # the shared objects as one target so we don't build them twice.
+    # Bootstrap compiles the module payload without depending on the final
+    # compiler that embeds it. Compile the shared implementation only once.
     slang_add_target(
         .
         OBJECT
@@ -388,6 +387,18 @@ else()
         ${slang_public_lib_args}
         LINK_WITH_PRIVATE slang-common-objects
         NO_SOURCE
+    )
+    target_sources(
+        slang-without-embedded-core-module
+        PRIVATE
+            "${slang_SOURCE_DIR}/source/slang-monolithic-standard-module-library/slang-no-embedded-standard-modules.cpp"
+    )
+endif()
+if(NOT SLANG_EMBED_STANDARD_MODULES)
+    target_sources(
+        slang
+        PRIVATE
+            "${slang_SOURCE_DIR}/source/slang-monolithic-standard-module-library/slang-no-embedded-standard-modules.cpp"
     )
 endif()
 

@@ -7,7 +7,9 @@ glob_append(workgraph_shader_sources "*.slang")
 set(workgraph_output_dir
     "${slang_BINARY_DIR}/$<CONFIG>/${slang_library_dir}/${SLANG_STANDARD_MODULE_DIR_NAME}/experimental"
 )
-set(workgraph_module_file "${workgraph_output_dir}/${SLANG_WORKGRAPH_MODULE_FILE_NAME}")
+set(workgraph_module_file
+    "${workgraph_output_dir}/${SLANG_WORKGRAPH_MODULE_FILE_NAME}"
+)
 
 set(workgraph_copied_files)
 foreach(shader_file ${workgraph_shader_sources})
@@ -45,14 +47,18 @@ else()
 endif()
 # Every compiler selection, including an external generator, loads the archive produced by
 # generate_core_module so building the workgraph module does not compile the core module again.
-set(SLANG_COMPILER_CORE_MODULE_ARGS -load-core-module ${core_module_archive_without_timestamp})
+set(SLANG_COMPILER_CORE_MODULE_ARGS
+    -load-core-module
+    ${core_module_archive_without_timestamp}
+)
 set(SLANG_COMPILER_EXTRA_DEPS generate_core_module)
 
 add_custom_command(
     OUTPUT ${workgraph_module_file}
     COMMAND
-        ${SLANG_COMPILER} ${SLANG_COMPILER_CORE_MODULE_ARGS} -I ${CMAKE_CURRENT_SOURCE_DIR}
-        workgraph.slang -o ${SLANG_WORKGRAPH_MODULE_FILE_NAME}
+        ${SLANG_COMPILER} ${SLANG_COMPILER_CORE_MODULE_ARGS} -I
+        ${CMAKE_CURRENT_SOURCE_DIR} workgraph.slang -o
+        ${SLANG_WORKGRAPH_MODULE_FILE_NAME}
     DEPENDS
         ${workgraph_copied_files}
         ${SLANG_COMPILER_DEPENDENCY}
@@ -65,17 +71,21 @@ add_custom_target(slang-workgraph-module ALL DEPENDS ${workgraph_module_file})
 set_target_properties(slang-workgraph-module PROPERTIES FOLDER generated)
 
 # Record this module's serialized output in the shared manifest consumed by the
-# optional slang-standard-modules monolithic library.
+# compiler-embedded standard-module payload.
 list(APPEND SLANG_STANDARD_MODULE_FILES ${workgraph_module_file})
-set(SLANG_STANDARD_MODULE_FILES "${SLANG_STANDARD_MODULE_FILES}"
-    CACHE INTERNAL "Built standard .slang-module files"
+set(SLANG_STANDARD_MODULE_FILES
+    "${SLANG_STANDARD_MODULE_FILES}"
+    CACHE INTERNAL
+    "Built standard .slang-module files"
 )
 list(APPEND SLANG_STANDARD_MODULE_TARGETS slang-workgraph-module)
-set(SLANG_STANDARD_MODULE_TARGETS "${SLANG_STANDARD_MODULE_TARGETS}"
-    CACHE INTERNAL "Producer targets for standard .slang-module files"
+set(SLANG_STANDARD_MODULE_TARGETS
+    "${SLANG_STANDARD_MODULE_TARGETS}"
+    CACHE INTERNAL
+    "Producer targets for standard .slang-module files"
 )
 
-if(NOT SLANG_BUILD_MONOLITHIC_STANDARD_MODULE_LIBRARY)
+if(NOT SLANG_EMBED_STANDARD_MODULES)
     install(
         DIRECTORY ${workgraph_output_dir}/
         DESTINATION ${SLANG_STANDARD_MODULE_INSTALL_DIR}/experimental

@@ -50,7 +50,10 @@ else()
     set(SLANG_COMPILER slang-bootstrap)
     set(SLANG_COMPILER_DEPENDENCY slang-bootstrap)
 endif()
-set(SLANG_COMPILER_CORE_MODULE_ARGS -load-core-module ${core_module_archive_without_timestamp})
+set(SLANG_COMPILER_CORE_MODULE_ARGS
+    -load-core-module
+    ${core_module_archive_without_timestamp}
+)
 set(SLANG_COMPILER_EXTRA_DEPS generate_core_module)
 
 # Determine compiler flags based on build type
@@ -65,8 +68,9 @@ endif()
 add_custom_command(
     OUTPUT ${neural_module_file}
     COMMAND
-        ${SLANG_COMPILER} ${SLANG_COMPILER_CORE_MODULE_ARGS} ${NEURAL_MODULE_DEFINES} -I
-        ${CMAKE_CURRENT_SOURCE_DIR} neural.slang -o ${SLANG_NEURAL_MODULE_FILE_NAME}
+        ${SLANG_COMPILER} ${SLANG_COMPILER_CORE_MODULE_ARGS}
+        ${NEURAL_MODULE_DEFINES} -I ${CMAKE_CURRENT_SOURCE_DIR} neural.slang -o
+        ${SLANG_NEURAL_MODULE_FILE_NAME}
     DEPENDS
         ${neural_copied_files}
         ${neural_unittest_sources}
@@ -83,19 +87,23 @@ add_custom_target(slang-neural-module ALL DEPENDS ${neural_module_file})
 set_target_properties(slang-neural-module PROPERTIES FOLDER generated)
 
 # Record this module's serialized output in the shared manifest consumed by the
-# optional slang-standard-modules monolithic library.
+# compiler-embedded standard-module payload.
 list(APPEND SLANG_STANDARD_MODULE_FILES ${neural_module_file})
-set(SLANG_STANDARD_MODULE_FILES "${SLANG_STANDARD_MODULE_FILES}"
-    CACHE INTERNAL "Built standard .slang-module files"
+set(SLANG_STANDARD_MODULE_FILES
+    "${SLANG_STANDARD_MODULE_FILES}"
+    CACHE INTERNAL
+    "Built standard .slang-module files"
 )
 list(APPEND SLANG_STANDARD_MODULE_TARGETS slang-neural-module)
-set(SLANG_STANDARD_MODULE_TARGETS "${SLANG_STANDARD_MODULE_TARGETS}"
-    CACHE INTERNAL "Producer targets for standard .slang-module files"
+set(SLANG_STANDARD_MODULE_TARGETS
+    "${SLANG_STANDARD_MODULE_TARGETS}"
+    CACHE INTERNAL
+    "Producer targets for standard .slang-module files"
 )
 
 # Install the neural directory to the configured location in the release package
 # Installs into <install-dir>/slang/ to match the `import slang.neural;` convention.
-if(NOT SLANG_BUILD_MONOLITHIC_STANDARD_MODULE_LIBRARY)
+if(NOT SLANG_EMBED_STANDARD_MODULES)
     install(
         DIRECTORY ${neural_output_dir}/
         DESTINATION ${SLANG_STANDARD_MODULE_INSTALL_DIR}/slang

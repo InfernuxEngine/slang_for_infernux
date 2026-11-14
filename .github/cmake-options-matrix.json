@@ -14,7 +14,7 @@
     { "option": "SLANG_ENABLE_PCH" },
     { "option": "SLANG_STANDARD_MODULE_DEVELOP_BUILD" },
     {
-      "option": "SLANG_BUILD_MONOLITHIC_STANDARD_MODULE_LIBRARY",
+      "option": "SLANG_EMBED_STANDARD_MODULES",
       "value": "ON",
       "install_test": "true"
     },

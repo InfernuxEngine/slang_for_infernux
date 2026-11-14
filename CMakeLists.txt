@@ -208,8 +208,8 @@ set(SLANG_DISABLE_NOTE_IDS
 
 option(SLANG_ENABLE_GFX "Enable gfx targets" ON)
 option(
-    SLANG_BUILD_MONOLITHIC_STANDARD_MODULE_LIBRARY
-    "Build and install all standard modules in one shared library separate from the compiler, instead of loose module files"
+    SLANG_EMBED_STANDARD_MODULES
+    "Embed compressed standard modules directly in the compiler instead of installing loose files"
     OFF
 )
 option(SLANG_ENABLE_SLANGD "Enable language server target" ON)
@@ -768,7 +768,7 @@ if(TARGET slangc)
 endif()
 add_subdirectory(source/slang-dispatcher)
 add_subdirectory(source/standard-modules)
-if(SLANG_BUILD_MONOLITHIC_STANDARD_MODULE_LIBRARY)
+if(SLANG_EMBED_STANDARD_MODULES)
     # Optional single-library packaging of the standard modules. Added after
     # standard-modules so the SLANG_STANDARD_MODULE_FILES manifest it depends on
     # is already populated.

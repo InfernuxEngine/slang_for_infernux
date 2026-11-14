@@ -3,6 +3,8 @@
 
 // Standard module configuration - generated from slang-standard-module-config.h.in
 
+#cmakedefine01 SLANG_EMBED_STANDARD_MODULES
+
 // Directory name for the standard module root relative to libslang location
 #define SLANG_STANDARD_MODULE_DIR_NAME "@SLANG_STANDARD_MODULE_DIR_NAME@"
 

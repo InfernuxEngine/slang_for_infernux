@@ -3,7 +3,6 @@
 
 #include "compiler-core/slang-artifact-util.h"
 #include "core/slang-blob.h"
-#include "core/slang-lz4-compression-system.h"
 #include "core/slang-shared-library.h"
 #include "core/slang-string-util.h"
 #include "slang-check-impl.h"
@@ -19,11 +18,13 @@
 #include "slang-serialize-container.h"
 #include "slang-serialize-ir.h"
 #include "slang-standard-module-config.h"
+#include "slang-standard-modules.h"
 #include "slang-tag-version.h"
 
 namespace Slang
 {
 
+#if !SLANG_EMBED_STANDARD_MODULES
 // Helper function to find the standard module root path.
 static String getStandardModuleDirPath()
 {
@@ -60,100 +61,7 @@ static String findStandardModulePath(String const& stdModuleDirPath, String cons
     return String();
 }
 
-// Optional alternative to the loose standard-module files: if the monolithic
-// slang-standard-modules shared library (built with SLANG_BUILD_MONOLITHIC_STANDARD_MODULE_LIBRARY)
-// is deployed beside slang.dll, obtain a serialized module from it by import
-// path. Returns the module's IR bytes, or null if the library is absent or does
-// not contain the requested module.
-//
-// The library filename is versioned on Mac/Linux and unversioned on Windows, and
-// its build tag is matched against slang.dll before use. The standard modules
-// stay ordinary on-demand imports -- only their *storage* moves from a directory
-// of files into one library. The experimental-feature gate is unaffected, since
-// it is enforced during import resolution regardless of where the bytes come
-// from.
-static ComPtr<ISlangBlob> tryLoadStandardModuleFromMonolithicLibrary(String const& moduleName)
-{
-    typedef const char*(GetBuildTagFunc)();
-    // (importPath, &compressedData, &compressedSize, &uncompressedSize) -> found?
-    typedef int(GetModuleFunc)(const char*, const void**, size_t*, size_t*);
-
-    // Resolve the lookup entry point once (thread-safe static init). The library
-    // handle is intentionally left loaded for the lifetime of the process.
-    static GetModuleFunc* s_getModule = []() -> GetModuleFunc*
-    {
-    // Undecorated library name: versioned off-Windows, matching the filename
-    // slang_add_target produces (see source/slang-monolithic-standard-module-library).
-#if SLANG_WINDOWS_FAMILY
-        String libBaseName = "slang-standard-modules";
-#else
-        String libBaseName = String("slang-standard-modules-") + SLANG_VERSION_NUMERIC;
 #endif
-        SharedLibrary::Handle handle = nullptr;
-
-        // Resolve beside the loaded slang library, the same way the loose
-        // standard-module directory is resolved (getStandardModuleDirPath), so a
-        // Slang loaded by absolute path from a separate SDK directory still finds
-        // its monolithic library -- this library is advertised as a drop-in
-        // replacement for that directory. SharedLibrary::load() applies the
-        // platform prefix/suffix (lib..., .so/.dylib/.dll) to the final path
-        // component while keeping the directory.
-        String libslangPath =
-            SharedLibraryUtils::getSharedLibraryFileName((void*)slang_createGlobalSession);
-        if (libslangPath.getLength())
-        {
-            String besidePath = Path::combine(Path::getParentDirectory(libslangPath), libBaseName);
-            SharedLibrary::load(besidePath.getBuffer(), handle);
-        }
-
-        // Fall back to the OS search path when the beside-slang lookup did not
-        // find it (e.g. slang itself was resolved via the loader search path).
-        if (!handle)
-            SharedLibrary::load(libBaseName.getBuffer(), handle);
-
-        if (!handle)
-            return nullptr;
-
-        auto getTag = (GetBuildTagFunc*)SharedLibrary::findSymbolAddressByName(
-            handle,
-            "slang_getEmbeddedModuleBuildTagString");
-        auto getModule = (GetModuleFunc*)SharedLibrary::findSymbolAddressByName(
-            handle,
-            "slang_getStandardModuleFromMonolithicLibrary");
-
-        // Reject a standard-modules library that does not match this slang build.
-        if (!getTag || !getModule || strcmp(getTag(), SLANG_TAG_VERSION) != 0)
-        {
-            SharedLibrary::unload(handle);
-            return nullptr;
-        }
-        return getModule;
-    }();
-
-    if (!s_getModule)
-        return ComPtr<ISlangBlob>();
-
-    const void* compressed = nullptr;
-    size_t compressedSize = 0;
-    size_t uncompressedSize = 0;
-    if (!s_getModule(moduleName.getBuffer(), &compressed, &compressedSize, &uncompressedSize) ||
-        !compressed || uncompressedSize == 0)
-        return ComPtr<ISlangBlob>();
-
-    // The embedded modules are LZ4-compressed (see
-    // slang-generate-monolithic-standard-module-library); inflate with the same compression system
-    // into a managed blob.
-    List<unsigned char> decompressed;
-    decompressed.setCount(Index(uncompressedSize));
-    if (SLANG_FAILED(LZ4CompressionSystem::getSingleton()->decompress(
-            compressed,
-            compressedSize,
-            uncompressedSize,
-            decompressed.getBuffer())))
-        return ComPtr<ISlangBlob>();
-
-    return RawBlob::create(decompressed.getBuffer(), uncompressedSize);
-}
 
 static SHA1::Digest computeSourceBlobDigest(ISlangBlob* blob)
 {
@@ -431,10 +339,11 @@ slang::IModule* Linkage::loadModuleFromBlob(
                 return loadedModule;
             }
 
-            sink.diagnose(Diagnostics::ModuleAlreadyLoadedWithDifferentSource{
-                .moduleName = name,
-                .location = SourceLoc(),
-            });
+            sink.diagnose(
+                Diagnostics::ModuleAlreadyLoadedWithDifferentSource{
+                    .moduleName = name,
+                    .location = SourceLoc(),
+                });
             sink.getBlobIfNeeded(outDiagnostics);
             return nullptr;
         }
@@ -1365,9 +1274,10 @@ RefPtr<Module> Linkage::findOrLoadSerializedModuleForModuleLibrary(
     {
         if (readResult == SLANG_E_NOT_AVAILABLE)
         {
-            sink->diagnose(Diagnostics::UnsupportedSerializedModuleFormatVersion{
-                .actualVersion = String(serializationVersion),
-                .location = SourceLoc()});
+            sink->diagnose(
+                Diagnostics::UnsupportedSerializedModuleFormatVersion{
+                    .actualVersion = String(serializationVersion),
+                    .location = SourceLoc()});
         }
         // Other failures are malformed metadata and retain the existing load-failure behavior.
         return nullptr;
@@ -1375,11 +1285,12 @@ RefPtr<Module> Linkage::findOrLoadSerializedModuleForModuleLibrary(
 
     if (!IRModule::isModuleVersionSupported(moduleVersion))
     {
-        sink->diagnose(Diagnostics::UnsupportedSerializedModuleVersion{
-            .actualVersion = String(moduleVersion),
-            .minimumVersion = String(IRModule::k_minSupportedModuleVersion),
-            .maximumVersion = String(IRModule::k_maxSupportedModuleVersion),
-            .location = SourceLoc()});
+        sink->diagnose(
+            Diagnostics::UnsupportedSerializedModuleVersion{
+                .actualVersion = String(moduleVersion),
+                .minimumVersion = String(IRModule::k_minSupportedModuleVersion),
+                .maximumVersion = String(IRModule::k_maxSupportedModuleVersion),
+                .location = SourceLoc()});
         return nullptr;
     }
 
@@ -1495,15 +1406,17 @@ RefPtr<Module> Linkage::loadBinaryModuleImpl(
         {
             if (isSpeculativeLoad)
             {
-                sink->diagnose(Diagnostics::IgnoringUnsupportedSerializedModuleFormatVersion{
-                    .actualVersion = String(serializationVersion),
-                    .location = requestingLoc});
+                sink->diagnose(
+                    Diagnostics::IgnoringUnsupportedSerializedModuleFormatVersion{
+                        .actualVersion = String(serializationVersion),
+                        .location = requestingLoc});
             }
             else
             {
-                sink->diagnose(Diagnostics::UnsupportedSerializedModuleFormatVersion{
-                    .actualVersion = String(serializationVersion),
-                    .location = requestingLoc});
+                sink->diagnose(
+                    Diagnostics::UnsupportedSerializedModuleFormatVersion{
+                        .actualVersion = String(serializationVersion),
+                        .location = requestingLoc});
             }
         }
         // Other failures are malformed metadata and retain the existing load-failure behavior.
@@ -1514,19 +1427,21 @@ RefPtr<Module> Linkage::loadBinaryModuleImpl(
     {
         if (isSpeculativeLoad)
         {
-            sink->diagnose(Diagnostics::IgnoringUnsupportedSerializedModuleVersion{
-                .actualVersion = String(moduleVersion),
-                .minimumVersion = String(IRModule::k_minSupportedModuleVersion),
-                .maximumVersion = String(IRModule::k_maxSupportedModuleVersion),
-                .location = requestingLoc});
+            sink->diagnose(
+                Diagnostics::IgnoringUnsupportedSerializedModuleVersion{
+                    .actualVersion = String(moduleVersion),
+                    .minimumVersion = String(IRModule::k_minSupportedModuleVersion),
+                    .maximumVersion = String(IRModule::k_maxSupportedModuleVersion),
+                    .location = requestingLoc});
         }
         else
         {
-            sink->diagnose(Diagnostics::UnsupportedSerializedModuleVersion{
-                .actualVersion = String(moduleVersion),
-                .minimumVersion = String(IRModule::k_minSupportedModuleVersion),
-                .maximumVersion = String(IRModule::k_maxSupportedModuleVersion),
-                .location = requestingLoc});
+            sink->diagnose(
+                Diagnostics::UnsupportedSerializedModuleVersion{
+                    .actualVersion = String(moduleVersion),
+                    .minimumVersion = String(IRModule::k_minSupportedModuleVersion),
+                    .maximumVersion = String(IRModule::k_maxSupportedModuleVersion),
+                    .location = requestingLoc});
         }
         return nullptr;
     }
@@ -1565,9 +1480,10 @@ void Linkage::_diagnoseErrorInImportedModule(DiagnosticSink* sink)
 {
     for (auto info = m_modulesBeingImported; info; info = info->next)
     {
-        sink->diagnose(Diagnostics::ErrorInImportedModule{
-            .module = info->name->text,
-            .location = info->importLoc});
+        sink->diagnose(
+            Diagnostics::ErrorInImportedModule{
+                .module = info->name->text,
+                .location = info->importLoc});
     }
     if (!isInLanguageServer())
     {
@@ -1756,9 +1672,10 @@ RefPtr<Module> Linkage::_getImportableModuleOrDiagnose(
     {
         if (sink)
         {
-            sink->diagnose(Diagnostics::NeedToEnableExperimentFeature{
-                .module = getText(moduleName),
-                .loc = requestingLoc});
+            sink->diagnose(
+                Diagnostics::NeedToEnableExperimentFeature{
+                    .module = getText(moduleName),
+                    .loc = requestingLoc});
         }
         return nullptr;
     }
@@ -1832,9 +1749,10 @@ RefPtr<Module> Linkage::_findOrImportModuleWithoutPolicy(
         if (isBeingImported(previouslyLoadedModule))
         {
             // We seem to be in the middle of loading this module
-            sink->diagnose(Diagnostics::RecursiveModuleImport{
-                .module = moduleName,
-                .location = requestingLoc});
+            sink->diagnose(
+                Diagnostics::RecursiveModuleImport{
+                    .module = moduleName,
+                    .location = requestingLoc});
             return nullptr;
         }
 
@@ -2065,31 +1983,33 @@ RefPtr<Module> Linkage::_findOrImportModuleWithoutPolicy(
         }
     }
 
-    // Fallback: If the normal search failed, we will just search the whatever modules
-    // from our standard module search path.
-    //
-    // First, if the optional slang-standard-modules library is deployed beside
-    // slang.dll, load the module from it. When that library is not deployed this
-    // is a cheap miss and we fall through to the loose-file search below.
-    if (ComPtr<ISlangBlob> embeddedModule =
-            tryLoadStandardModuleFromMonolithicLibrary(moduleName->text))
+    ComPtr<ISlangBlob> embeddedModule;
+    const auto embeddedStatus =
+        loadEmbeddedStandardModule(moduleName->text, embeddedModule.writeRef());
+    if (embeddedStatus != SLANG_E_NOT_FOUND)
     {
-        auto pathInfo = PathInfo::makeFromString(moduleName->text);
-        RefPtr<Module> module = loadModuleImpl(
+        if (SLANG_FAILED(embeddedStatus))
+        {
+            sink->diagnose(
+                Diagnostics::CannotOpenFile{
+                    .path = String("embedded standard module ") + moduleName->text,
+                    .location = requestingLoc});
+            return nullptr;
+        }
+        // A known built-in module is authoritative; a failed IR import is a
+        // compiler error, not a reason to silently try another implementation.
+        return loadModuleImpl(
             moduleName,
-            pathInfo,
+            PathInfo::makeFromString(moduleName->text),
             embeddedModule,
             requestingLoc,
             sink,
             nullptr,
             ModuleBlobType::IR,
-            /*isSpeculativeLoad*/ true);
-        if (module)
-        {
-            return module;
-        }
+            /*isSpeculativeLoad*/ false);
     }
 
+#if !SLANG_EMBED_STANDARD_MODULES
     auto standardModuleDirPath = getStandardModuleDirPath();
     if (standardModuleDirPath.getLength() > 0)
     {
@@ -2120,6 +2040,8 @@ RefPtr<Module> Linkage::_findOrImportModuleWithoutPolicy(
             }
         }
     }
+
+#endif
 
     // If we tried out all of our candidate file names
     // and failed with each of them, then we diagnose
@@ -2396,14 +2318,17 @@ Linkage::IncludeResult Linkage::findAndIncludeFile(
             // emits it across primary source files.
             if (translationUnit->sourceLanguageImpliedBySourceContentsLoc.isValid())
             {
-                sink->diagnose(Diagnostics::ConflictingSourceLanguageDirectives{
-                    .location = directive.location,
-                    .firstLocation = translationUnit->sourceLanguageImpliedBySourceContentsLoc});
+                sink->diagnose(
+                    Diagnostics::ConflictingSourceLanguageDirectives{
+                        .location = directive.location,
+                        .firstLocation =
+                            translationUnit->sourceLanguageImpliedBySourceContentsLoc});
             }
             else
             {
-                sink->diagnose(Diagnostics::SourceLanguageDirectiveConflictsWithTranslationUnit{
-                    .location = directive.location});
+                sink->diagnose(
+                    Diagnostics::SourceLanguageDirectiveConflictsWithTranslationUnit{
+                        .location = directive.location});
             }
         }
     }

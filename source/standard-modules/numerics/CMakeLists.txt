@@ -33,10 +33,7 @@ set(numerics_differentiable_sources
     differentiable-conformances.slang
     differentiable-wrappers.slang
 )
-set(numerics_adapter_sources
-    __builtin.slang
-    __builtin-differentiable.slang
-)
+set(numerics_adapter_sources __builtin.slang __builtin-differentiable.slang)
 
 if(SLANG_GENERATORS_PATH)
     if(CMAKE_HOST_WIN32)
@@ -53,7 +50,10 @@ else()
     set(SLANG_COMPILER_DEPENDENCY slang-bootstrap)
 endif()
 
-set(SLANG_COMPILER_CORE_MODULE_ARGS -load-core-module ${core_module_archive_without_timestamp})
+set(SLANG_COMPILER_CORE_MODULE_ARGS
+    -load-core-module
+    ${core_module_archive_without_timestamp}
+)
 set(SLANG_COMPILER_EXTRA_DEPS generate_core_module)
 
 # These adapter modules deliberately do not import the public numerics modules. Their lookup
@@ -65,8 +65,9 @@ add_custom_command(
     OUTPUT ${numerics_builtin_module_file}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${numerics_private_output_dir}
     COMMAND
-        ${SLANG_COMPILER} ${SLANG_COMPILER_CORE_MODULE_ARGS} -experimental-feature
-        ${CMAKE_CURRENT_SOURCE_DIR}/__builtin.slang -o ${numerics_builtin_module_file}
+        ${SLANG_COMPILER} ${SLANG_COMPILER_CORE_MODULE_ARGS}
+        -experimental-feature ${CMAKE_CURRENT_SOURCE_DIR}/__builtin.slang -o
+        ${numerics_builtin_module_file}
     DEPENDS
         __builtin.slang
         ${SLANG_COMPILER_DEPENDENCY}
@@ -78,9 +79,10 @@ add_custom_command(
     OUTPUT ${numerics_differentiable_builtin_module_file}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${numerics_private_output_dir}
     COMMAND
-        ${SLANG_COMPILER} ${SLANG_COMPILER_CORE_MODULE_ARGS} -experimental-feature
-        ${CMAKE_CURRENT_SOURCE_DIR}/__builtin-differentiable.slang
-        -o ${numerics_differentiable_builtin_module_file}
+        ${SLANG_COMPILER} ${SLANG_COMPILER_CORE_MODULE_ARGS}
+        -experimental-feature
+        ${CMAKE_CURRENT_SOURCE_DIR}/__builtin-differentiable.slang -o
+        ${numerics_differentiable_builtin_module_file}
     DEPENDS
         __builtin-differentiable.slang
         ${SLANG_COMPILER_DEPENDENCY}
@@ -93,8 +95,12 @@ add_custom_command(
 # and base sources under their import paths so that dependent numeric modules can compile in the
 # same build. Installed clients still import the serialized modules produced above and below.
 set(numerics_source_stage_root "${CMAKE_CURRENT_BINARY_DIR}/source")
-set(numerics_staged_base_source "${numerics_source_stage_root}/slang/numerics.slang")
-set(numerics_staged_interface_source "${numerics_source_stage_root}/slang/interfaces.slang")
+set(numerics_staged_base_source
+    "${numerics_source_stage_root}/slang/numerics.slang"
+)
+set(numerics_staged_interface_source
+    "${numerics_source_stage_root}/slang/interfaces.slang"
+)
 set(numerics_staged_builtin_conformances_source
     "${numerics_source_stage_root}/slang/builtin-conformances.slang"
 )
@@ -104,7 +110,9 @@ set(numerics_staged_floating_point_conformances_source
 set(numerics_staged_cooperative_vector_conformances_source
     "${numerics_source_stage_root}/slang/cooperative-vector-conformances.slang"
 )
-set(numerics_staged_wrappers_source "${numerics_source_stage_root}/slang/wrappers.slang")
+set(numerics_staged_wrappers_source
+    "${numerics_source_stage_root}/slang/wrappers.slang"
+)
 set(numerics_staged_builtin_source
     "${numerics_source_stage_root}/slang/numerics/__builtin.slang"
 )
@@ -124,9 +132,12 @@ set(numerics_staged_sources
 
 add_custom_command(
     OUTPUT ${numerics_staged_sources}
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${numerics_source_stage_root}/slang/numerics
     COMMAND
-        ${CMAKE_COMMAND} -E copy_if_different numerics.slang ${numerics_staged_base_source}
+        ${CMAKE_COMMAND} -E make_directory
+        ${numerics_source_stage_root}/slang/numerics
+    COMMAND
+        ${CMAKE_COMMAND} -E copy_if_different numerics.slang
+        ${numerics_staged_base_source}
     COMMAND
         ${CMAKE_COMMAND} -E copy_if_different interfaces.slang
         ${numerics_staged_interface_source}
@@ -137,7 +148,8 @@ add_custom_command(
         ${CMAKE_COMMAND} -E copy_if_different floating-point-conformances.slang
         ${numerics_staged_floating_point_conformances_source}
     COMMAND
-        ${CMAKE_COMMAND} -E copy_if_different cooperative-vector-conformances.slang
+        ${CMAKE_COMMAND} -E copy_if_different
+        cooperative-vector-conformances.slang
         ${numerics_staged_cooperative_vector_conformances_source}
     COMMAND
         ${CMAKE_COMMAND} -E copy_if_different wrappers.slang
@@ -157,8 +169,8 @@ add_custom_command(
     OUTPUT ${numerics_module_file}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${numerics_output_dir}
     COMMAND
-        ${SLANG_COMPILER} ${SLANG_COMPILER_CORE_MODULE_ARGS}
-        -I ${numerics_source_stage_root} -experimental-feature
+        ${SLANG_COMPILER} ${SLANG_COMPILER_CORE_MODULE_ARGS} -I
+        ${numerics_source_stage_root} -experimental-feature
         ${CMAKE_CURRENT_SOURCE_DIR}/numerics.slang -o ${numerics_module_file}
     DEPENDS
         ${numerics_base_sources}
@@ -173,10 +185,10 @@ add_custom_command(
     OUTPUT ${numerics_differentiable_module_file}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${numerics_private_output_dir}
     COMMAND
-        ${SLANG_COMPILER} ${SLANG_COMPILER_CORE_MODULE_ARGS}
-        -I ${numerics_source_stage_root} -experimental-feature
-        ${CMAKE_CURRENT_SOURCE_DIR}/differentiable.slang
-        -o ${numerics_differentiable_module_file}
+        ${SLANG_COMPILER} ${SLANG_COMPILER_CORE_MODULE_ARGS} -I
+        ${numerics_source_stage_root} -experimental-feature
+        ${CMAKE_CURRENT_SOURCE_DIR}/differentiable.slang -o
+        ${numerics_differentiable_module_file}
     DEPENDS
         ${numerics_differentiable_sources}
         ${numerics_staged_sources}
@@ -188,7 +200,8 @@ add_custom_command(
 )
 
 add_custom_target(
-    slang-numerics-modules ALL
+    slang-numerics-modules
+    ALL
     DEPENDS
         ${numerics_builtin_module_file}
         ${numerics_module_file}
@@ -198,22 +211,28 @@ add_custom_target(
 set_target_properties(slang-numerics-modules PROPERTIES FOLDER generated)
 
 # Record these modules' serialized outputs in the shared manifest consumed by the
-# optional slang-standard-modules monolithic library.
-list(APPEND SLANG_STANDARD_MODULE_FILES
+# compiler-embedded standard-module payload.
+list(
+    APPEND
+    SLANG_STANDARD_MODULE_FILES
     ${numerics_builtin_module_file}
     ${numerics_module_file}
     ${numerics_differentiable_builtin_module_file}
     ${numerics_differentiable_module_file}
 )
-set(SLANG_STANDARD_MODULE_FILES "${SLANG_STANDARD_MODULE_FILES}"
-    CACHE INTERNAL "Built standard .slang-module files"
+set(SLANG_STANDARD_MODULE_FILES
+    "${SLANG_STANDARD_MODULE_FILES}"
+    CACHE INTERNAL
+    "Built standard .slang-module files"
 )
 list(APPEND SLANG_STANDARD_MODULE_TARGETS slang-numerics-modules)
-set(SLANG_STANDARD_MODULE_TARGETS "${SLANG_STANDARD_MODULE_TARGETS}"
-    CACHE INTERNAL "Producer targets for standard .slang-module files"
+set(SLANG_STANDARD_MODULE_TARGETS
+    "${SLANG_STANDARD_MODULE_TARGETS}"
+    CACHE INTERNAL
+    "Producer targets for standard .slang-module files"
 )
 
-if(NOT SLANG_BUILD_MONOLITHIC_STANDARD_MODULE_LIBRARY)
+if(NOT SLANG_EMBED_STANDARD_MODULES)
     install(
         FILES ${numerics_module_file}
         DESTINATION ${SLANG_STANDARD_MODULE_INSTALL_DIR}/slang
