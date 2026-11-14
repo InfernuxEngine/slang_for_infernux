@@ -1,6 +1,8 @@
 
 @PACKAGE_INIT@
 
+set(slang_COMPILER_ID "@SLANG_COMPILER_ID@")
+
 if (NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
   include("${CMAKE_CURRENT_LIST_DIR}/slangTargets.cmake")
   check_required_components("slang")

@@ -781,6 +781,53 @@ if(SLANG_EMBED_STANDARD_MODULES)
 endif()
 add_subdirectory(examples)
 
+# Export the identity of this compiler, including its actual source pin, to
+# consumers. The language/serialized-module version remains unchanged.
+set(SLANG_COMPILER_ID
+    "${SLANG_VERSION_FULL}/spirv-tools=${SLANG_ENABLE_BUILTIN_SPIRV_TOOLS}"
+)
+if(GIT_EXECUTABLE AND EXISTS "${slang_SOURCE_DIR}/.git")
+    execute_process(
+        COMMAND
+            "${GIT_EXECUTABLE}" -C "${slang_SOURCE_DIR}" rev-parse HEAD
+            --absolute-git-dir
+        OUTPUT_VARIABLE _slang_source_identity
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        COMMAND_ERROR_IS_FATAL ANY
+    )
+    string(REPLACE "\n" ";" _slang_source_identity "${_slang_source_identity}")
+    list(GET _slang_source_identity 0 _slang_source_revision)
+    list(GET _slang_source_identity 1 _slang_git_directory)
+    string(APPEND SLANG_COMPILER_ID "/${_slang_source_revision}")
+    # Follow both detached submodules and branches. A new commit must refresh
+    # the SDK identity even if no CMake source file changed.
+    file(
+        GLOB_RECURSE _slang_git_refs
+        CONFIGURE_DEPENDS
+        "${_slang_git_directory}/refs/heads/*"
+    )
+    set_property(
+        DIRECTORY
+        APPEND
+        PROPERTY
+            CMAKE_CONFIGURE_DEPENDS
+                "${_slang_git_directory}/HEAD"
+                ${_slang_git_refs}
+    )
+    if(EXISTS "${_slang_git_directory}/packed-refs")
+        set_property(
+            DIRECTORY
+            APPEND
+            PROPERTY
+                CMAKE_CONFIGURE_DEPENDS "${_slang_git_directory}/packed-refs"
+        )
+    endif()
+endif()
+target_compile_definitions(
+    slang
+    INTERFACE "SLANG_COMPILER_ID=\"${SLANG_COMPILER_ID}\""
+)
+
 #
 # Packaging
 #
