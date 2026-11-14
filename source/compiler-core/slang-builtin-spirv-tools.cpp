@@ -53,7 +53,8 @@ int optimizeSpirv(glslang_CompileRequest_1_3* request)
             static const char* const severities[] =
                 {"error", "error", "error", "warning", "note", "note"};
             StringBuilder text;
-            text << severities[level] << ":spirv-opt:" << position.line << ": " << message << "\n";
+            text << severities[level] << ":spirv-opt:" << UInt64(position.line) << ": " << message
+                 << "\n";
             request->diagnosticFunc(
                 text.getBuffer(),
                 text.getLength(),
