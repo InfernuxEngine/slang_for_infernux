@@ -31,12 +31,14 @@ public struct InlineVector<T, int N> : IVector<T>
     internal T[N] data;
 
     /// Default constructor - initializes all elements to zero.
+    [Differentiable]
     public __init() { data = {}; }
 
     /**
     Scalar broadcast constructor - fills all elements with the same value.
     @param[in] value The value to broadcast to all elements.
     */
+    [Differentiable]
     public __init(T value) {
         [ForceUnroll]
         for (int i = 0; i < N; i++)
@@ -47,12 +49,14 @@ public struct InlineVector<T, int N> : IVector<T>
     Array constructor - initializes from an array.
     @param[in] data Array of N elements to initialize the vector.
     */
+    [Differentiable]
     public __init(T[Size] data) { this.data = data; }
 
     /**
     Copy constructor.
     @param[in] other The vector to copy from.
     */
+    [Differentiable]
     public __init(This other) { this.data = other.data; }
 
     public __init<InputArray : IArray<T>>(InputArray data)
