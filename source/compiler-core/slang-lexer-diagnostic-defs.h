@@ -48,6 +48,7 @@ DIAGNOSTIC(
     "'\"' encountered before '(' in raw string literal. '\"' cannot be a part of a delimiter.")
 
 DIAGNOSTIC(10011, Error, unexpectedEndOfInput, "unexpected end of input")
+DIAGNOSTIC(10012, Error, endOfFileInComment, "end of file in block comment")
 
 DIAGNOSTIC(
     10012,

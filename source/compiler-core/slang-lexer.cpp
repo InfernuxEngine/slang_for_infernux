@@ -427,7 +427,10 @@ static void _lexBlockComment(Lexer* lexer)
         switch (_peek(lexer))
         {
         case kEOF:
-            // TODO(tfoley) diagnostic!
+            if (auto sink = lexer->getDiagnosticSink())
+            {
+                diagnose(sink, _getSourceLoc(lexer), LexerDiagnostics::endOfFileInComment);
+            }
             return;
 
         case '\n':
