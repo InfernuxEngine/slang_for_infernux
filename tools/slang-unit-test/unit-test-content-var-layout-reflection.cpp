@@ -147,4 +147,24 @@ SLANG_UNIT_TEST(contentVarLayoutReflection)
     SLANG_CHECK(spirvVec3ElementSize == 12);
     SLANG_CHECK(spirvVec3Stride == 16);
     SLANG_CHECK(spirvVec3Stride > spirvVec3ElementSize);
+
+    // Named layouts override the target default for the content array.
+    auto explicitModule = spirvSession->loadModuleFromSourceString(
+        "explicitStructuredBufferLayouts",
+        "explicitStructuredBufferLayouts.slang",
+        R"(
+            StructuredBuffer<float, Std140DataLayout> padded;
+            RWStructuredBuffer<float3, ScalarDataLayout> packed;
+        )",
+        diagnosticBlob.writeRef());
+    SLANG_CHECK(explicitModule != nullptr);
+    auto explicitLayout = explicitModule->getLayout();
+    auto paddedContent =
+        explicitLayout->getParameterByIndex(0)->getTypeLayout()->getContentVarLayout();
+    auto packedContent =
+        explicitLayout->getParameterByIndex(1)->getTypeLayout()->getContentVarLayout();
+    SLANG_CHECK(
+        paddedContent->getTypeLayout()->getElementStride(SLANG_PARAMETER_CATEGORY_UNIFORM) == 16);
+    SLANG_CHECK(
+        packedContent->getTypeLayout()->getElementStride(SLANG_PARAMETER_CATEGORY_UNIFORM) == 12);
 }

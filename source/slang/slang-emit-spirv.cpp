@@ -9302,19 +9302,12 @@ struct SPIRVEmitContext : public SourceEmitterBase, public SPIRVEmitSharedContex
 
         // The buffer is a global parameter, so it's a pointer
         auto bufPtrType = cast<IRPtrTypeBase>(inst->getOperand(0)->getDataType());
-        // It's lowered to a struct type..
         auto bufType = cast<IRStructType>(bufPtrType->getValueType());
-        // containing an unsized array, specifically one with an explicit
-        // stride, which is not expressible in spirv_asm blocks
+        // The lowered buffer contains a runtime array with an explicit stride.
         auto arrayType = cast<IRArrayTypeBase>(bufType->getFields().getFirst()->getFieldType());
 
-        // The element type should have a `SizeAndAlignment` decoration created during lowering.
-        auto sizeDecor =
-            arrayType->getElementType()->findDecoration<IRSizeAndAlignmentDecoration>();
-        SLANG_ASSERT(sizeDecor);
-        const auto stride = align(sizeDecor->getSize(), (int)sizeDecor->getAlignment());
-
-        auto strideOperand = emitIntConstant(stride, builder.getUIntType());
+        auto strideOperand =
+            emitIntConstant(getArrayStrideDecorationValue(arrayType), builder.getUIntType());
         auto result =
             emitOpCompositeConstruct(parent, inst, inst->getDataType(), arrayLength, strideOperand);
         return result;

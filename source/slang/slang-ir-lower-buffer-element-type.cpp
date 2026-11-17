@@ -2496,6 +2496,10 @@ IRTypeLayoutRuleName getTypeLayoutRuleNameForBuffer(TargetProgram* target, IRTyp
         return IRTypeLayoutRuleName::MetalParameterBlock;
     }
     auto targetReq = target->getTargetReq();
+    // WGSL emits structured buffers as native storage arrays. Use their element layout for
+    // operations such as GetDimensions, regardless of SPIR-V layout arguments or options.
+    if (isWGPUTarget(targetReq) && as<IRHLSLStructuredBufferTypeBase>(bufferType))
+        return IRTypeLayoutRuleName::Std430;
     if (targetReq->getTarget() != CodeGenTarget::WGSL)
     {
         if (!isKhronosTarget(target->getTargetReq()) && !isCPUTargetViaLLVM(targetReq))

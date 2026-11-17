@@ -2380,6 +2380,11 @@ Type* BuiltinGenericType::getElementType() const
     return as<Type>(_getGenericTypeArg(getDeclRefBase(), 0));
 }
 
+Type* HLSLStructuredBufferTypeBase::getLayoutType() const
+{
+    return as<Type>(_getGenericTypeArg(getDeclRefBase(), 1));
+}
+
 Type* ResourceType::getElementType()
 {
     return as<Type>(_getGenericTypeArg(this, 0));

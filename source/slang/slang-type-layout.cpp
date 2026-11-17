@@ -2036,6 +2036,27 @@ LayoutRulesImpl* GLSLLayoutRulesFamilyImpl::getAnyValueRules()
     return &kGLSLAnyValueLayoutRulesImpl_;
 }
 
+// Select the rules for a concrete buffer layout argument. A synthesized
+// buffer such as an append counter can omit the layout argument entirely.
+static LayoutRulesImpl* getExplicitGLSLBufferLayoutRules(Type* layoutType)
+{
+    if (!layoutType)
+        return nullptr;
+    switch (layoutType->astNodeType)
+    {
+    case ASTNodeType::Std140DataLayoutType:
+        return &kStd140LayoutRulesImpl_;
+    case ASTNodeType::Std430DataLayoutType:
+        return &kStd430LayoutRulesImpl_;
+    case ASTNodeType::ScalarDataLayoutType:
+        return &kScalarLayoutRulesImpl_;
+    case ASTNodeType::CDataLayoutType:
+        return &kCLayoutRulesImpl_;
+    default:
+        return nullptr;
+    }
+}
+
 LayoutRulesImpl* GLSLLayoutRulesFamilyImpl::getConstantBufferRules(
     CompilerOptionSet& compilerOptions,
     Type* containerType)
@@ -2043,22 +2064,8 @@ LayoutRulesImpl* GLSLLayoutRulesFamilyImpl::getConstantBufferRules(
     // Explicit layout rule in ConstantBuffer should take precedence over global options.
     if (auto cbufferType = as<ConstantBufferType>(containerType))
     {
-        switch (cbufferType->getLayoutType()->astNodeType)
-        {
-        case ASTNodeType::Std140DataLayoutType:
-            return &kStd140LayoutRulesImpl_;
-        case ASTNodeType::Std430DataLayoutType:
-            return &kStd430LayoutRulesImpl_;
-        case ASTNodeType::ScalarDataLayoutType:
-            return &kScalarLayoutRulesImpl_;
-        case ASTNodeType::CDataLayoutType:
-            return &kCLayoutRulesImpl_;
-        case ASTNodeType::DefaultDataLayoutType:
-        case ASTNodeType::DefaultPushConstantDataLayoutType:
-            break;
-        default:
-            break;
-        }
+        if (auto explicitRules = getExplicitGLSLBufferLayoutRules(cbufferType->getLayoutType()))
+            return explicitRules;
     }
     // Default layout types fall through to global options.
     if (compilerOptions.shouldUseScalarLayout())
@@ -4523,9 +4530,17 @@ RefPtr<StructuredBufferTypeLayout> createStructuredBufferTypeLayout(
     Type* structuredBufferType,
     Type* elementType)
 {
-    // look up the appropriate rules via the `LayoutRulesFamily`
-    auto structuredBufferLayoutRules =
-        context.getRulesFamily()->getStructuredBufferRules(context.targetReq->getOptionSet());
+    auto& options = context.targetReq->getOptionSet();
+    auto structuredBufferLayoutRules = context.getRulesFamily()->getStructuredBufferRules(options);
+    // Direct SPIR-V lowering gives an explicit layout priority over the target defaults.
+    // For example, StructuredBuffer<float, Std140DataLayout> has a 16-byte array stride.
+    if (isSPIRV(context.targetReq->getTarget()) && options.shouldEmitSPIRVDirectly())
+    {
+        auto bufferType = as<HLSLStructuredBufferTypeBase>(structuredBufferType);
+        SLANG_ASSERT(bufferType);
+        if (auto explicitRules = getExplicitGLSLBufferLayoutRules(bufferType->getLayoutType()))
+            structuredBufferLayoutRules = explicitRules;
+    }
 
     // Create and save type layout for the buffer contents.
     auto elementTypeLayout =
