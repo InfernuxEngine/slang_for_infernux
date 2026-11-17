@@ -66,6 +66,11 @@ endif()
 #
 enable_language(C CXX)
 
+# Sources and vendored generators use UTF-8 even on localized Windows hosts.
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 include(FindPackageHandleStandardArgs)
 include(CMakeDependentOption)
 include(GNUInstallDirs)
