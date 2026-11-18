@@ -1,4 +1,8 @@
 //TEST:SIMPLE(filecheck=CHECK):-target spirv -g1 -debug-info-include-source -emit-spirv-directly -preserve-embedded-source
+//TEST:SIMPLE(filecheck=NODEBUG):-target spirv -g0 -emit-spirv-directly
+
+// NODEBUG: OpEntryPoint
+// NODEBUG-NOT: {{^}}OpSource {{.*}}
 
 // At -g1 (Minimal), -debug-info-include-source embeds the shader source via the core SPIR-V
 // OpSource File+Source operands, without pulling in the NonSemantic debug extension.
